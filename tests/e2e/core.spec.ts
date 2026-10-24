@@ -1,0 +1,41 @@
+import { expect, test } from "@playwright/test";
+import { testApiToken } from "./credentials";
+
+test("login, edit, persist and search a note", async ({ page }) => {
+  const title = `端到端测试-${Date.now()}`;
+  await page.goto("/login");
+  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByRole("button", { name: "登录" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByTitle("新建笔记 (⌘N)").click();
+  await expect(page).toHaveURL(/\/notes\/\d+$/);
+  const editor = page.locator(".prose-editor");
+  await expect(editor).toBeVisible();
+  // Click the visible blank canvas, not a locator that targets the small text block.
+  const canvas = await page.locator(".editor-content").boundingBox();
+  if (!canvas) throw new Error("Editor canvas is missing");
+  await page.mouse.click(canvas.x + canvas.width / 2, canvas.y + canvas.height - 40);
+  await expect(editor).toBeFocused();
+  await page.keyboard.insertText(`${title}\n可持久化的中文正文-${title}`);
+  await expect(editor).toContainText(title);
+  await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.reload();
+  await expect(editor).toContainText(title);
+  await editor.click();
+  await page.keyboard.press("Meta+f");
+  const find = page.getByPlaceholder("在笔记中查找");
+  await find.fill("端到端");
+  await expect(page.locator(".search-hit").first()).toBeVisible();
+  await find.press("Escape");
+  await editor.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/h2");
+  await expect(page.getByRole("listbox", { name: "斜杠命令" })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("分节标题");
+  await expect(editor.locator("h2")).toContainText("分节标题");
+  await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.getByPlaceholder("搜索标题和正文").fill(title);
+  await expect(page.locator(".note-row").filter({ hasText: title }).first()).toBeVisible();
+});
