@@ -9,7 +9,12 @@ attachmentRoutes.post("/", async (c) => {
   const declared = Number(c.req.header("Content-Length") ?? 0);
   if (!Number.isFinite(declared) || declared <= 0) throw new ApiError(411, "CONTENT_LENGTH_REQUIRED", "上传必须提供 Content-Length");
   if (declared > 10_500_000) throw new ApiError(413, "ATTACHMENT_TOO_LARGE", "上传请求超过大小限制");
-  const form = await c.req.formData();
+  if (!/^multipart\/form-data(?:;|$)/i.test(c.req.header("Content-Type") ?? "")) {
+    throw new ApiError(415, "INVALID_UPLOAD_CONTENT_TYPE", "图片上传必须使用 multipart/form-data 格式");
+  }
+  const form = await c.req.formData().catch(() => {
+    throw new ApiError(400, "INVALID_UPLOAD_FORM", "上传表单无效或不完整，请重新选择图片后重试");
+  });
   const file = form.get("file");
   const noteId = Number(form.get("note_id"));
   const operationId = String(form.get("operation_id") ?? "");
