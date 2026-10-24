@@ -51,14 +51,14 @@ export function listNotes(filters: NoteFilters = {}, page = 1, signal?: AbortSig
 }
 export const getNote = (id: number) => request<NoteDetail>(`/api/notes/${id}`);
 export const createNote = (folderId?: number) => request<NoteDetail>("/api/notes", {
-  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), ...(folderId ? { folder_id: folderId } : {}), content_schema_version: 2 }),
+  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), ...(folderId ? { folder_id: folderId } : {}), content_schema_version: 3 }),
 });
 export const createNoteWithContent = (folderId: number, content: Record<string, unknown>) => request<NoteDetail>("/api/notes", {
-  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), folder_id: folderId, content_schema_version: 2, content }),
+  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), folder_id: folderId, content_schema_version: 3, content }),
 });
 export type NotePatch = { content?: Record<string, unknown>; folder_id?: number; pinned?: boolean; starred?: boolean };
 export const patchNote = (id: number, revision: number, patch: NotePatch, keepalive = false, operationId = uuidv7()) => request<{ note: NoteDetail; operation_id: string; applied_revision: number }>(`/api/notes/${id}`, {
-  method: "PATCH", keepalive, body: JSON.stringify({ operation_id: operationId, expected_revision: revision, content_schema_version: 2, ...patch }),
+  method: "PATCH", keepalive, body: JSON.stringify({ operation_id: operationId, expected_revision: revision, content_schema_version: 3, ...patch }),
 });
 export const removeNote = (id: number, revision: number) => request<NoteDetail>(`/api/notes/${id}`, { method: "DELETE", body: JSON.stringify({ operation_id: uuidv7(), expected_revision: revision }) });
 export const restoreNote = (id: number, revision: number) => request<NoteDetail>(`/api/notes/${id}/restore`, { method: "POST", body: JSON.stringify({ operation_id: uuidv7(), expected_revision: revision }) });

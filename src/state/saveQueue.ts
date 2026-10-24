@@ -37,7 +37,7 @@ export class NoteSaveQueue {
   }
   private async persist(sequence: number, content: ContentNode) {
     try {
-      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: 2, editSequence: sequence, updatedAt: Date.now(), content });
+      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: 3, editSequence: sequence, updatedAt: Date.now(), content });
       if (sequence <= this.confirmedSequence) { await deleteDraftIfSequence(this.noteId, sequence); return; }
       if (stored) this.localSequence = Math.max(this.localSequence, sequence);
       if (sequence === this.sequence) this.report(this.status, undefined, this.lastError);

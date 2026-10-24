@@ -13,7 +13,7 @@ const blockNodes = new Set([
 const markNodes = new Set(["bold", "italic", "underline", "strike", "code", "highlight", "link"]);
 
 export const contentEnvelopeSchema = z.object({
-  content_schema_version: z.union([z.literal(1), z.literal(2)]),
+  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   content: z.record(z.string(), z.unknown()),
 });
 
@@ -48,7 +48,7 @@ function safeLink(value: unknown): boolean {
   }
 }
 
-export function validateAndDeriveContent(input: unknown): DerivedContent {
+export function validateAndDeriveContent(input: unknown, schemaVersion = 3): DerivedContent {
   const serialized = JSON.stringify(input);
   if (bytes(serialized) > MAX_CONTENT_BYTES) {
     throw new ContentValidationError("CONTENT_TOO_LARGE", "正文超过 1,500,000 字节限制", 413);
@@ -67,6 +67,11 @@ export function validateAndDeriveContent(input: unknown): DerivedContent {
     }
     if (!node.type || !blockNodes.has(node.type)) {
       throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", `不支持的正文节点：${node.type ?? "unknown"}`);
+    }
+    if (node.type === "paragraph" || node.type === "heading") {
+      const alignment = node.attrs?.textAlign;
+      if (alignment != null && (typeof alignment !== "string" || !["left", "center", "right"].includes(alignment))) throw new ContentValidationError("INVALID_ALIGNMENT", "正文对齐仅支持靠左、居中或靠右");
+      if (alignment != null && schemaVersion < 3) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "正文对齐需要新版客户端，请刷新页面");
     }
     if (node.type === "table") {
       for (const key of Object.keys(node.attrs ?? {})) {

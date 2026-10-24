@@ -59,7 +59,7 @@ describe("HTTP security boundary", () => {
     const versionResponse = await app.request(`${origin}/api/notes/8001/versions/9001`, { headers: { Cookie: cookie } }, env);
     expect((await versionResponse.json<{ content: unknown }>()).content).toEqual(JSON.parse(tableContent));
     const metadata = await app.request(`${origin}/api/maintenance/backup?maintenance_id=${maintenanceId}&entity=metadata`, { headers: { Cookie: cookie } }, env);
-    expect(await metadata.json()).toMatchObject({ contentSchemaVersion: 2, migrationVersion: "0003_content_v2" });
+    expect(await metadata.json()).toMatchObject({ contentSchemaVersion: 3, migrationVersion: "0004_block_alignment" });
     expect((await app.request(`${origin}/api/notes/8001`, { headers: { Cookie: cookie } }, env)).status).toBe(200);
     const release = await app.request(`${origin}/api/maintenance/mode`, { method: "DELETE", headers: writeHeaders, body: JSON.stringify({ maintenance_id: maintenanceId, confirm: true }) }, env);
     expect(release.status).toBe(200);

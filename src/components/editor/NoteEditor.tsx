@@ -1,4 +1,5 @@
 import Highlight from "@tiptap/extension-highlight";
+import TextAlign from "@tiptap/extension-text-align";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import { tableExtensions } from "./tables";
@@ -7,12 +8,18 @@ import { readPreference, writePreference, useUiStore } from "../../state/ui";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { Bold, CheckSquare, Code, Eye, Heading1, Heading2, Highlighter, ImagePlus, Italic, Link2, List, ListOrdered, Minus, MoveHorizontal, Quote, Redo2, Strikethrough, Table2, Underline as UnderlineIcon, Undo2 } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, Bold, CheckSquare, Code, Eye, Heading1, Heading2, Highlighter, ImagePlus, Italic, Link2, List, ListOrdered, Minus, MoveHorizontal, Quote, Redo2, Strikethrough, Table2, Underline as UnderlineIcon, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ContentNode, NoteDetail } from "../../../shared/dto";
 import { uploadAttachment } from "../../api/client";
 import { SearchHighlight, searchHighlightKey, updateEditorSearch } from "./searchHighlight";
 import type { Editor } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
+
+function alignText(editor: Editor, alignment: "left" | "center" | "right") {
+  if (!editor.isEditable) return false;
+  return editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; }).setTextAlign(alignment).run();
+}
 
 function ResizableImageNode({ node, updateAttributes, editor }: NodeViewProps) {
   const initial = typeof node.attrs.width === "number" ? node.attrs.width : undefined;
@@ -91,6 +98,11 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
   const editorRef = useRef<Editor | null>(null);
   const extensions = useMemo(() => [
     StarterKit.configure({ link: false, underline: false }), Underline, Highlight,
+    TextAlign.extend({ addKeyboardShortcuts() { return {
+      "Mod-Shift-l": () => alignText(this.editor, "left"),
+      "Mod-Shift-e": () => alignText(this.editor, "center"),
+      "Mod-Shift-r": () => alignText(this.editor, "right"),
+    }; } }).configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: null }),
     Link.configure({ openOnClick: false, autolink: true, defaultProtocol: "https", protocols: ["http", "https", "mailto"] }),
     ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), SearchHighlight,
   ], []);
@@ -165,6 +177,11 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
       <Tool label="删除线" disabled={readOnly} active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
       <Tool label="高亮" disabled={readOnly} active={editor.isActive("highlight")} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Tool>
       <Tool label="行内代码" disabled={readOnly} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
+      <span className="separator" />
+      <Tool label="靠左对齐" disabled={readOnly || !editor.can().setTextAlign("left")} active={editor.isActive({ textAlign: "left" })} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
+      <Tool label="居中对齐" disabled={readOnly || !editor.can().setTextAlign("center")} active={editor.isActive({ textAlign: "center" })} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
+      <Tool label="靠右对齐" disabled={readOnly || !editor.can().setTextAlign("right")} active={editor.isActive({ textAlign: "right" })} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
+      <span className="separator" />
       <Tool label="无序列表" disabled={readOnly} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
       <Tool label="有序列表" disabled={readOnly} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>
       <Tool label="待办" disabled={readOnly} active={editor.isActive("taskList")} onClick={() => editor.chain().focus().toggleTaskList().run()}><CheckSquare /></Tool>

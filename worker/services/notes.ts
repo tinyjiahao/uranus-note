@@ -19,7 +19,7 @@ function listItem(row: NoteRow): NoteListItem {
 }
 
 function detail(row: NoteRow): NoteDetail {
-  if (row.content_schema_version !== 1 && row.content_schema_version !== 2) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "请刷新应用以支持此正文版本");
+  if (row.content_schema_version !== 1 && row.content_schema_version !== 2 && row.content_schema_version !== 3) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "请刷新应用以支持此正文版本");
   return { ...listItem(row), content: JSON.parse(row.content_json) as ContentNode, contentSchemaVersion: row.content_schema_version };
 }
 
@@ -60,7 +60,7 @@ export async function listNotes(db: D1Database, options: ListOptions): Promise<P
   return { items: rows.slice(0, pageSize).map(listItem), page, pageSize, hasMore: rows.length > pageSize, totalCount: count?.count ?? 0 };
 }
 
-type CreateInput = { operation_id: string; folder_id?: number | undefined; content_schema_version: 1 | 2; content?: Record<string, unknown> | undefined };
+type CreateInput = { operation_id: string; folder_id?: number | undefined; content_schema_version: 1 | 2 | 3; content?: Record<string, unknown> | undefined };
 
 export async function createNote(db: D1Database, input: CreateInput) {
   validateOperationId(input.operation_id);
@@ -74,7 +74,7 @@ export async function createNote(db: D1Database, input: CreateInput) {
     ? await db.prepare("SELECT id FROM uranus_folders WHERE system_key = 'default'").first<{ id: number }>()
     : await db.prepare("SELECT id FROM uranus_folders WHERE id = ?").bind(input.folder_id).first<{ id: number }>();
   if (!folder) throw new ApiError(404, "FOLDER_NOT_FOUND", "文件夹不存在");
-  const derived = validateAndDeriveContent(input.content ?? EMPTY_CONTENT);
+  const derived = validateAndDeriveContent(input.content ?? EMPTY_CONTENT, input.content_schema_version);
   const id = randomSafeInteger();
   const now = Date.now();
   await db.batch([
@@ -90,7 +90,7 @@ export async function createNote(db: D1Database, input: CreateInput) {
 }
 
 export type PatchInput = {
-  operation_id: string; expected_revision: number; content_schema_version?: 1 | 2 | undefined; content?: Record<string, unknown> | undefined;
+  operation_id: string; expected_revision: number; content_schema_version?: 1 | 2 | 3 | undefined; content?: Record<string, unknown> | undefined;
   folder_id?: number | undefined; pinned?: boolean | undefined; starred?: boolean | undefined;
 };
 
@@ -104,14 +104,14 @@ export async function patchNote(db: D1Database, id: number, input: PatchInput) {
     throw new ApiError(409, replay.result_code ?? "REVISION_CONFLICT", "该操作此前已失败", { latest: await getNote(db, id) });
   }
   const current = await getNote(db, id);
-  if (current.contentSchemaVersion === 2 && input.content_schema_version !== 2) throw new ApiError(409, "CLIENT_UPDATE_REQUIRED", "此笔记使用新版表格，请刷新页面后重试");
+  if (current.contentSchemaVersion > (input.content_schema_version ?? 1)) throw new ApiError(409, "CLIENT_UPDATE_REQUIRED", "此笔记使用新版格式，请刷新页面后重试");
   if (current.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "请先恢复笔记再编辑");
   if (input.folder_id !== undefined) {
     const folder = await db.prepare("SELECT id FROM uranus_folders WHERE id = ?").bind(input.folder_id).first();
     if (!folder) throw new ApiError(404, "FOLDER_NOT_FOUND", "目标文件夹不存在");
   }
   const content = input.content ?? current.content as Record<string, unknown>;
-  const derived = validateAndDeriveContent(content);
+  const derived = validateAndDeriveContent(content, input.content_schema_version ?? current.contentSchemaVersion);
   const contentChanged = derived.serialized !== JSON.stringify(current.content);
   if (derived.attachmentIds.length) {
     const placeholders = derived.attachmentIds.map(() => "?").join(",");
@@ -128,11 +128,11 @@ export async function patchNote(db: D1Database, id: number, input: PatchInput) {
   const attachmentGuard = attachmentIds.length
     ? ` AND (SELECT COUNT(*) FROM uranus_attachments a WHERE a.note_id = ? AND a.status = 'ready' AND a.id IN (${attachmentIds.map(() => "?").join(",")})) = ?`
     : "";
-  const updateBindings: unknown[] = [folderId, derived.title, derived.snippet, derived.serialized, revision, pinned ? 1 : 0, starred ? 1 : 0, input.operation_id, now, id, input.expected_revision];
+  const updateBindings: unknown[] = [folderId, derived.title, derived.snippet, derived.serialized, Math.max(2, input.content_schema_version ?? current.contentSchemaVersion), revision, pinned ? 1 : 0, starred ? 1 : 0, input.operation_id, now, id, input.expected_revision];
   if (attachmentIds.length) updateBindings.push(id, ...attachmentIds, attachmentIds.length);
   const statements = [
     db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'note.patch', ?, 'pending', ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000),
-    db.prepare(`UPDATE uranus_notes SET folder_id = ?, title = ?, snippet = ?, content_json = ?, content_schema_version = 2, revision = ?, pinned = ?, starred = ?, last_operation_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL AND purge_pending = 0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode = 'normal')${attachmentGuard}`).bind(...updateBindings),
+    db.prepare(`UPDATE uranus_notes SET folder_id = ?, title = ?, snippet = ?, content_json = ?, content_schema_version = ?, revision = ?, pinned = ?, starred = ?, last_operation_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL AND purge_pending = 0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode = 'normal')${attachmentGuard}`).bind(...updateBindings),
     db.prepare("INSERT INTO uranus_note_search(note_id, normalized_title, normalized_text, source_revision) SELECT id, ?, ?, revision FROM uranus_notes WHERE id = ? AND last_operation_id = ? ON CONFLICT(note_id) DO UPDATE SET normalized_title = excluded.normalized_title, normalized_text = excluded.normalized_text, source_revision = excluded.source_revision").bind(derived.normalizedTitle, derived.normalizedText, id, input.operation_id),
   ];
   if (contentChanged) {
@@ -202,7 +202,7 @@ export async function listVersions(db: D1Database, noteId: number, page: number,
 export async function getVersion(db: D1Database, noteId: number, versionId: number) {
   const row = await db.prepare("SELECT id, note_id, content_json, content_schema_version, title, char_count, source_revision, created_at FROM uranus_note_versions WHERE id = ? AND note_id = ?").bind(versionId, noteId).first<Record<string, unknown>>();
   if (!row) throw new ApiError(404, "VERSION_NOT_FOUND", "版本不存在");
-  if (![1, 2].includes(Number(row.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "历史正文版本不受支持");
+  if (![1, 2, 3].includes(Number(row.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "历史正文版本不受支持");
   return { ...row, id: Number(row.id), content: JSON.parse(String(row.content_json)), content_json: undefined };
 }
 
@@ -244,11 +244,12 @@ export async function restoreVersion(db: D1Database, noteId: number, versionId: 
   if (current.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "请先恢复笔记");
   const versionRow = await db.prepare("SELECT content_json, content_schema_version FROM uranus_note_versions WHERE id=? AND note_id=?").bind(versionId, noteId).first<{ content_json: string; content_schema_version: number }>();
   if (!versionRow) throw new ApiError(404, "VERSION_NOT_FOUND", "版本不存在");
-  if (![1, 2].includes(versionRow.content_schema_version)) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "该版本正文无法由当前应用恢复");
+  if (![1, 2, 3].includes(versionRow.content_schema_version)) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "该版本正文无法由当前应用恢复");
   const restoredContent = JSON.parse(versionRow.content_json) as Record<string, unknown>;
   const restored = validateAndDeriveContent(restoredContent);
   const currentDerived = validateAndDeriveContent(current.content);
-  const same = restored.serialized === currentDerived.serialized && current.contentSchemaVersion === 2;
+  const restoredSchemaVersion = Math.max(2, current.contentSchemaVersion, versionRow.content_schema_version);
+  const same = restored.serialized === currentDerived.serialized && current.contentSchemaVersion === restoredSchemaVersion;
   const newRevision = same ? current.revision : input.expected_revision + 1;
   const backupId = randomSafeInteger();
   const now = Date.now();
@@ -259,7 +260,7 @@ export async function restoreVersion(db: D1Database, noteId: number, versionId: 
     statements.push(db.prepare("INSERT INTO uranus_note_versions(id, note_id, content_json, content_schema_v1, content_schema_version, title, char_count, source_revision, created_at) SELECT ?, id, content_json, 1, content_schema_version, title, ?, revision, ? FROM uranus_notes WHERE id=? AND revision=? AND deleted_at IS NULL").bind(backupId, currentDerived.charCount, now, noteId, input.expected_revision));
     for (const attachmentId of currentDerived.attachmentIds) statements.push(db.prepare("INSERT INTO uranus_attachment_refs(attachment_id, note_id, version_id) SELECT ?, ?, id FROM uranus_note_versions WHERE id=? ON CONFLICT DO NOTHING").bind(attachmentId, noteId, backupId));
     statements.push(
-      db.prepare("UPDATE uranus_notes SET title=?, snippet=?, content_json=?, content_schema_version=2, revision=?, last_operation_id=?, updated_at=? WHERE id=? AND revision=? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(restored.title, restored.snippet, restored.serialized, newRevision, input.operation_id, now, noteId, input.expected_revision),
+      db.prepare("UPDATE uranus_notes SET title=?, snippet=?, content_json=?, content_schema_version=?, revision=?, last_operation_id=?, updated_at=? WHERE id=? AND revision=? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(restored.title, restored.snippet, restored.serialized, restoredSchemaVersion, newRevision, input.operation_id, now, noteId, input.expected_revision),
       db.prepare("UPDATE uranus_note_search SET normalized_title=?, normalized_text=?, source_revision=? WHERE note_id=? AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(restored.normalizedTitle, restored.normalizedText, newRevision, noteId, noteId, input.operation_id),
       db.prepare("DELETE FROM uranus_attachment_refs WHERE note_id=? AND version_id IS NULL AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(noteId, noteId, input.operation_id),
     );
