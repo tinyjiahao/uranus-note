@@ -1,6 +1,6 @@
 import type { ContentNode } from "../../shared/dto";
 
-export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3; editSequence: number; updatedAt: number; content: ContentNode };
+export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3 | 4; editSequence: number; updatedAt: number; content: ContentNode };
 const DB_NAME = "uranus-drafts";
 const STORE = "drafts";
 

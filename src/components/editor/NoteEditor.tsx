@@ -18,29 +18,36 @@ import { closeHistory } from "@tiptap/pm/history";
 
 function alignText(editor: Editor, alignment: "left" | "center" | "right") {
   if (!editor.isEditable) return false;
-  return editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; }).setTextAlign(alignment).run();
+  const chain = editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; });
+  return editor.isActive("image") ? chain.updateAttributes("image", { imageAlign: alignment }).run() : chain.setTextAlign(alignment).run();
 }
 
-function ResizableImageNode({ node, updateAttributes, editor }: NodeViewProps) {
+function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }: NodeViewProps) {
   const initial = typeof node.attrs.width === "number" ? node.attrs.width : undefined;
   const [width, setWidth] = useState<number | undefined>(initial);
   const drag = useRef<{ startX: number; startWidth: number; latest: number } | undefined>(undefined);
   const cleanup = useRef<() => void>(() => undefined);
+  useEffect(() => { if (!drag.current) setWidth(typeof node.attrs.width === "number" ? node.attrs.width : undefined); }, [node.attrs.width]);
   useEffect(() => () => { const current = drag.current; if (current) updateAttributes({ width: Math.round(current.latest) }); cleanup.current(); }, []);
-  return <NodeViewWrapper as="figure" className="resizable-image" draggable data-drag-handle>
-    <img src={String(node.attrs.src)} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} />
+  return <NodeViewWrapper as="figure" className={`resizable-image${selected ? " image-selected" : ""}`} data-image-align={node.attrs.imageAlign ?? undefined} style={node.attrs.imageAlign ? { textAlign: node.attrs.imageAlign } : undefined}>
+    <span className="image-frame" draggable data-drag-handle contentEditable={false}>
+    <img src={String(node.attrs.src)} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} onClick={() => {
+      const pos = getPos(); if (typeof pos === "number") editor.commands.setNodeSelection(pos);
+    }} />
     {editor.isEditable && <button className="image-resize-handle" aria-label="调整图片宽度" onPointerDown={(event) => {
       event.preventDefault(); event.stopPropagation();
+      if (!editor.isEditable) return;
       const image = event.currentTarget.previousElementSibling as HTMLImageElement;
       const startWidth = image.getBoundingClientRect().width;
       drag.current = { startX: event.clientX, startWidth, latest: startWidth };
       const move = (moveEvent: PointerEvent) => {
         const current = drag.current; if (!current) return;
+        if (!editor.isEditable) { drag.current = undefined; setWidth(initial); cleanup.current(); return; }
         const next = Math.min(900, Math.max(120, current.startWidth + moveEvent.clientX - current.startX));
         current.latest = next; setWidth(next);
       };
       const stop = () => {
-        const current = drag.current; if (current) updateAttributes({ width: Math.round(current.latest) });
+        const current = drag.current; if (current && editor.isEditable) updateAttributes({ width: Math.round(current.latest) });
         drag.current = undefined; cleanup.current();
       };
       cleanup.current = () => {
@@ -49,6 +56,7 @@ function ResizableImageNode({ node, updateAttributes, editor }: NodeViewProps) {
       };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", stop); window.addEventListener("blur", stop);
     }} />}
+    </span>
   </NodeViewWrapper>;
 }
 
@@ -58,6 +66,9 @@ const AttachmentImage = Image.extend({
       ...this.parent?.(),
       attachmentId: { default: null, parseHTML: (element) => element.getAttribute("data-attachment-id"), renderHTML: (attrs) => ({ "data-attachment-id": attrs.attachmentId }) },
       width: { default: null, parseHTML: (element) => element.getAttribute("width"), renderHTML: (attrs) => attrs.width ? { width: attrs.width } : {} },
+      imageAlign: { default: null, parseHTML: (element) => {
+        const value = element.getAttribute("data-image-align"); return value && ["left", "center", "right"].includes(value) ? value : null;
+      }, renderHTML: (attrs) => attrs.imageAlign ? { "data-image-align": attrs.imageAlign } : {} },
     };
   },
   addNodeView() { return ReactNodeViewRenderer(ResizableImageNode); },
@@ -148,6 +159,8 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
     return () => window.removeEventListener("keydown", handler);
   });
   if (!editor) return <div className="center-message">正在加载编辑器…</div>;
+  const alignmentActive = (value: string) => editor.isActive("image") ? editor.getAttributes("image").imageAlign === value : editor.isActive({ textAlign: value });
+  const alignmentDisabled = (value: string) => readOnly || (!editor.isActive("image") && !editor.can().setTextAlign(value));
   const filteredSlashCommands = slashCommands.filter((command) => slashQuery !== null && `${command.key} ${command.label}`.toLocaleLowerCase().includes(slashQuery.toLocaleLowerCase()));
   const activeSlashIndex = filteredSlashCommands.length ? (slashIndex % filteredSlashCommands.length + filteredSlashCommands.length) % filteredSlashCommands.length : 0;
   const toggleReadOnly = () => {
@@ -178,9 +191,9 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
       <Tool label="高亮" disabled={readOnly} active={editor.isActive("highlight")} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Tool>
       <Tool label="行内代码" disabled={readOnly} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
       <span className="separator" />
-      <Tool label="靠左对齐" disabled={readOnly || !editor.can().setTextAlign("left")} active={editor.isActive({ textAlign: "left" })} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
-      <Tool label="居中对齐" disabled={readOnly || !editor.can().setTextAlign("center")} active={editor.isActive({ textAlign: "center" })} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
-      <Tool label="靠右对齐" disabled={readOnly || !editor.can().setTextAlign("right")} active={editor.isActive({ textAlign: "right" })} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
+      <Tool label="靠左对齐" disabled={alignmentDisabled("left")} active={alignmentActive("left")} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
+      <Tool label="居中对齐" disabled={alignmentDisabled("center")} active={alignmentActive("center")} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
+      <Tool label="靠右对齐" disabled={alignmentDisabled("right")} active={alignmentActive("right")} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
       <span className="separator" />
       <Tool label="无序列表" disabled={readOnly} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
       <Tool label="有序列表" disabled={readOnly} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>

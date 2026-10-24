@@ -59,7 +59,7 @@ maintenanceRoutes.get("/backup", async (c) => {
     for (const [name, table] of Object.entries({ folders: "uranus_folders", notes: "uranus_notes", versions: "uranus_note_versions", attachments: "uranus_attachments", refs: "uranus_attachment_refs" })) {
       counts[name] = (await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first<{ count: number }>())?.count ?? 0;
     }
-    return c.json({ backupFormatVersion: 1, appVersion, migrationVersion: "0004_block_alignment", contentSchemaVersion: 3, maintenanceId, generation: state.generation, counts });
+    return c.json({ backupFormatVersion: 1, appVersion, migrationVersion: "0005_image_layout", contentSchemaVersion: 4, maintenanceId, generation: state.generation, counts });
   }
   const tables: Record<string, string> = { folders: "uranus_folders", notes: "uranus_notes", versions: "uranus_note_versions", attachments: "uranus_attachments", refs: "uranus_attachment_refs" };
   const table = tables[entity];
@@ -135,7 +135,7 @@ maintenanceRoutes.post("/restore", async (c) => {
   }
   const statements: D1PreparedStatement[] = [];
   for (const item of input.items) {
-    if (["notes", "versions"].includes(input.entity) && item.content_schema_version !== undefined && ![1, 2, 3].includes(Number(item.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "备份正文版本不受支持");
+    if (["notes", "versions"].includes(input.entity) && item.content_schema_version !== undefined && ![1, 2, 3, 4].includes(Number(item.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "备份正文版本不受支持");
     if (input.entity === "folders") {
       const id = Number(item.id); const systemKey = item.system_key === "default" ? "default" : null;
       if (systemKey === "default") {
@@ -144,10 +144,10 @@ maintenanceRoutes.post("/restore", async (c) => {
       } else statements.push(c.env.DB.prepare("INSERT INTO uranus_folders(id,name,system_key,created_at,updated_at) VALUES (?,?,NULL,?,?)").bind(id, String(item.name), Number(item.created_at), Number(item.updated_at)));
     } else if (input.entity === "notes") {
       const contentJson = String(item.content_json); validateAndDeriveContent(JSON.parse(contentJson));
-      statements.push(c.env.DB.prepare("INSERT INTO uranus_notes(id,folder_id,prev_folder_id,title,snippet,content_json,content_schema_version,revision,pinned,starred,deleted_at,purge_pending,last_operation_id,created_at,updated_at) VALUES (?,?,?,?,?,?,3,?,?,?,?,0,?,?,?)").bind(Number(item.id), Number(item.folder_id), item.prev_folder_id == null ? null : Number(item.prev_folder_id), String(item.title), String(item.snippet), contentJson, Number(item.revision), Number(item.pinned), Number(item.starred), item.deleted_at == null ? null : Number(item.deleted_at), `restore:${input.backup_id}`, Number(item.created_at), Number(item.updated_at)));
+      statements.push(c.env.DB.prepare("INSERT INTO uranus_notes(id,folder_id,prev_folder_id,title,snippet,content_json,content_schema_version,revision,pinned,starred,deleted_at,purge_pending,last_operation_id,created_at,updated_at) VALUES (?,?,?,?,?,?,4,?,?,?,?,0,?,?,?)").bind(Number(item.id), Number(item.folder_id), item.prev_folder_id == null ? null : Number(item.prev_folder_id), String(item.title), String(item.snippet), contentJson, Number(item.revision), Number(item.pinned), Number(item.starred), item.deleted_at == null ? null : Number(item.deleted_at), `restore:${input.backup_id}`, Number(item.created_at), Number(item.updated_at)));
     } else if (input.entity === "versions") {
       const contentJson = String(item.content_json); const derived = validateAndDeriveContent(JSON.parse(contentJson));
-      statements.push(c.env.DB.prepare("INSERT INTO uranus_note_versions(id,note_id,content_json,content_schema_v1,content_schema_version,title,char_count,source_revision,created_at) VALUES (?,?,?,1,3,?,?,?,?)").bind(Number(item.id), Number(item.note_id), contentJson, String(item.title), derived.charCount, Number(item.source_revision), Number(item.created_at)));
+      statements.push(c.env.DB.prepare("INSERT INTO uranus_note_versions(id,note_id,content_json,content_schema_v1,content_schema_version,title,char_count,source_revision,created_at) VALUES (?,?,?,1,4,?,?,?,?)").bind(Number(item.id), Number(item.note_id), contentJson, String(item.title), derived.charCount, Number(item.source_revision), Number(item.created_at)));
     } else if (input.entity === "attachments") {
       const objectKey = String(item.object_key); const id = String(item.id); const noteId = Number(item.note_id);
       if (!objectKey.startsWith(`uranus/attachments/${noteId}/${id}.`)) throw new ApiError(400, "INVALID_OBJECT_KEY", "备份中的附件键不属于目标笔记");

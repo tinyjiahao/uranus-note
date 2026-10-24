@@ -128,4 +128,9 @@ select, .table-menu input, .table-picker input { color: var(--text); background:
 .settings-drawer::backdrop { background: rgb(0 0 0 / .28); }.settings-drawer header { display: flex; align-items: center; justify-content: space-between; }.settings-drawer section { padding-block: 12px; border-top: 1px solid var(--line); }.settings-drawer section > label { display: flex; justify-content: space-between; align-items: center; margin: 14px 0; }.settings-drawer p { color: var(--muted); line-height: 1.6; }.settings-drawer button { padding: 12px; border: 1px solid var(--line); }.settings-drawer a { color: var(--accent-deep); }
 .notice { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 30; max-width: 95vw; padding: 12px; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }.notice button { margin-left: 10px; padding: 6px; text-decoration: underline; }
 .back-to-list { display: none; }
+.prose-editor .resizable-image { width: 100%; margin: 18px 0; text-align: center; }
+.prose-editor td .resizable-image, .prose-editor th .resizable-image { text-align: inherit; }
+.image-frame { display: inline-block; position: relative; max-width: 100%; vertical-align: middle; line-height: 0; }
+.image-selected .image-frame { outline: 2px solid var(--accent-deep); outline-offset: 3px; border-radius: 8px; }
+.readonly .image-resize-handle { display: none; }
 @media(max-width: 580px) { .back-to-list { display: inline-flex; }.editor-meta { flex-wrap: wrap; }.editor-meta button, .format-toolbar button, .table-tools button { min-width: 44px; min-height: 44px; }.workspace:not(:has(.editor-shell)) .editor-panel { display: none; }.settings-drawer { width: 100vw; }.editor-panel { min-width: 0; }.table-tools { font-size: 12px; } }

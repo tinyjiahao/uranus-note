@@ -21,7 +21,7 @@ export type NoteListItem = {
 
 export type NoteDetail = NoteListItem & {
   content: ContentNode;
-  contentSchemaVersion: 1 | 2 | 3;
+  contentSchemaVersion: 1 | 2 | 3 | 4;
 };
 
 export type FolderDto = {

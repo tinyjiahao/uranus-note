@@ -39,8 +39,8 @@ function cellAttributes() {
       renderHTML: (attrs: Record<string, unknown>) => attrs.verticalAlign ? { style: `vertical-align: ${attrs.verticalAlign}` } : {} },
   };
 }
-const Cell = TableCell.extend({ addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
-const Header = TableHeader.extend({ addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
+const Cell = TableCell.extend({ content: "(paragraph | image)+", addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
+const Header = TableHeader.extend({ content: "(paragraph | image)+", addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
 
 class UranusTableView extends TableView {
   private cancelDrag: (() => void) | undefined;

@@ -19,7 +19,7 @@ function listItem(row: NoteRow): NoteListItem {
 }
 
 function detail(row: NoteRow): NoteDetail {
-  if (row.content_schema_version !== 1 && row.content_schema_version !== 2 && row.content_schema_version !== 3) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "请刷新应用以支持此正文版本");
+  if (row.content_schema_version !== 1 && row.content_schema_version !== 2 && row.content_schema_version !== 3 && row.content_schema_version !== 4) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "请刷新应用以支持此正文版本");
   return { ...listItem(row), content: JSON.parse(row.content_json) as ContentNode, contentSchemaVersion: row.content_schema_version };
 }
 
@@ -60,7 +60,7 @@ export async function listNotes(db: D1Database, options: ListOptions): Promise<P
   return { items: rows.slice(0, pageSize).map(listItem), page, pageSize, hasMore: rows.length > pageSize, totalCount: count?.count ?? 0 };
 }
 
-type CreateInput = { operation_id: string; folder_id?: number | undefined; content_schema_version: 1 | 2 | 3; content?: Record<string, unknown> | undefined };
+type CreateInput = { operation_id: string; folder_id?: number | undefined; content_schema_version: 1 | 2 | 3 | 4; content?: Record<string, unknown> | undefined };
 
 export async function createNote(db: D1Database, input: CreateInput) {
   validateOperationId(input.operation_id);
@@ -90,7 +90,7 @@ export async function createNote(db: D1Database, input: CreateInput) {
 }
 
 export type PatchInput = {
-  operation_id: string; expected_revision: number; content_schema_version?: 1 | 2 | 3 | undefined; content?: Record<string, unknown> | undefined;
+  operation_id: string; expected_revision: number; content_schema_version?: 1 | 2 | 3 | 4 | undefined; content?: Record<string, unknown> | undefined;
   folder_id?: number | undefined; pinned?: boolean | undefined; starred?: boolean | undefined;
 };
 
@@ -202,7 +202,7 @@ export async function listVersions(db: D1Database, noteId: number, page: number,
 export async function getVersion(db: D1Database, noteId: number, versionId: number) {
   const row = await db.prepare("SELECT id, note_id, content_json, content_schema_version, title, char_count, source_revision, created_at FROM uranus_note_versions WHERE id = ? AND note_id = ?").bind(versionId, noteId).first<Record<string, unknown>>();
   if (!row) throw new ApiError(404, "VERSION_NOT_FOUND", "版本不存在");
-  if (![1, 2, 3].includes(Number(row.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "历史正文版本不受支持");
+  if (![1, 2, 3, 4].includes(Number(row.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "历史正文版本不受支持");
   return { ...row, id: Number(row.id), content: JSON.parse(String(row.content_json)), content_json: undefined };
 }
 
@@ -244,7 +244,7 @@ export async function restoreVersion(db: D1Database, noteId: number, versionId: 
   if (current.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "请先恢复笔记");
   const versionRow = await db.prepare("SELECT content_json, content_schema_version FROM uranus_note_versions WHERE id=? AND note_id=?").bind(versionId, noteId).first<{ content_json: string; content_schema_version: number }>();
   if (!versionRow) throw new ApiError(404, "VERSION_NOT_FOUND", "版本不存在");
-  if (![1, 2, 3].includes(versionRow.content_schema_version)) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "该版本正文无法由当前应用恢复");
+  if (![1, 2, 3, 4].includes(versionRow.content_schema_version)) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "该版本正文无法由当前应用恢复");
   const restoredContent = JSON.parse(versionRow.content_json) as Record<string, unknown>;
   const restored = validateAndDeriveContent(restoredContent);
   const currentDerived = validateAndDeriveContent(current.content);

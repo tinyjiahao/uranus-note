@@ -13,7 +13,7 @@ const blockNodes = new Set([
 const markNodes = new Set(["bold", "italic", "underline", "strike", "code", "highlight", "link"]);
 
 export const contentEnvelopeSchema = z.object({
-  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   content: z.record(z.string(), z.unknown()),
 });
 
@@ -48,7 +48,7 @@ function safeLink(value: unknown): boolean {
   }
 }
 
-export function validateAndDeriveContent(input: unknown, schemaVersion = 3): DerivedContent {
+export function validateAndDeriveContent(input: unknown, schemaVersion = 4): DerivedContent {
   const serialized = JSON.stringify(input);
   if (bytes(serialized) > MAX_CONTENT_BYTES) {
     throw new ContentValidationError("CONTENT_TOO_LARGE", "正文超过 1,500,000 字节限制", 413);
@@ -83,7 +83,13 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 3): Der
       if (!rows.length || !columns || rows.some(row => row.type !== "tableRow" || row.content?.length !== columns)) throw new ContentValidationError("INVALID_TABLE", "表格必须包含等长的行");
     }
     if (node.type === "tableCell" || node.type === "tableHeader") {
-      if ((node.content ?? []).some(child => child.type !== "paragraph" || child.content?.some(inline => !["text", "hardBreak"].includes(inline.type ?? "")))) throw new ContentValidationError("INVALID_TABLE", "单元格仅支持段落和内联文字");
+      for (const child of node.content ?? []) {
+        if (child.type === "image") {
+          if (schemaVersion < 4) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "表格图片需要新版客户端，请刷新页面");
+        } else if (child.type !== "paragraph" || child.content?.some(inline => !["text", "hardBreak"].includes(inline.type ?? ""))) {
+          throw new ContentValidationError("INVALID_TABLE", "单元格仅支持段落、内联文字和图片");
+        }
+      }
       const attrs = node.attrs ?? {};
       if (Object.keys(attrs).some(key => !["colspan", "rowspan", "colwidth", "textAlign", "verticalAlign", "align"].includes(key))) throw new ContentValidationError("INVALID_TABLE", "单元格属性不受支持");
       for (const key of ["colspan", "rowspan"]) if (attrs[key] != null && attrs[key] !== 1) throw new ContentValidationError("INVALID_TABLE", "暂不支持合并单元格");
@@ -101,6 +107,10 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 3): Der
       }
     }
     if (node.type === "image") {
+      const align = node.attrs?.imageAlign;
+      if (align != null && (typeof align !== "string" || !["left", "center", "right"].includes(align))) throw new ContentValidationError("INVALID_ALIGNMENT", "图片对齐仅支持靠左、居中或靠右");
+      if (align != null && schemaVersion < 4) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "图片对齐需要新版客户端，请刷新页面");
+      if (node.content?.length) throw new ContentValidationError("INVALID_ATTACHMENT", "图片节点不能包含子节点");
       const id = node.attrs?.attachmentId;
       const src = node.attrs?.src;
       if (typeof id !== "string" || typeof src !== "string" || src !== `/api/attachments/${id}`) {
