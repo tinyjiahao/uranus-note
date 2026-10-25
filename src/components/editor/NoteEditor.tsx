@@ -2,7 +2,11 @@ import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
-import { tableExtensions } from "./tables";
+import { tableExtensions, tableContext } from "./tables";
+import { CellSelection } from "@tiptap/pm/tables";
+import { NodeSelection } from "@tiptap/pm/state";
+import type { SelectionBookmark } from "@tiptap/pm/state";
+import { pointAnchor, type PopupAnchor } from "../Popup";
 import { TablePicker, TableTools } from "./TableTools";
 import { readPreference, writePreference, useUiStore } from "../../state/ui";
 import Underline from "@tiptap/extension-underline";
@@ -15,10 +19,13 @@ import { uploadAttachment } from "../../api/client";
 import { SearchHighlight, searchHighlightKey, updateEditorSearch } from "./searchHighlight";
 import type { Editor } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
+import { createPortal } from "react-dom";
+import { joinNoteTitle, splitNoteTitle, titleText, updateTitle } from "./noteTitle";
 
 function alignText(editor: Editor, alignment: "left" | "center" | "right") {
   if (!editor.isEditable) return false;
   const chain = editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; });
+  if (editor.state.selection instanceof CellSelection) return chain.setCellAttribute("textAlign", alignment).run();
   return editor.isActive("image") ? chain.updateAttributes("image", { imageAlign: alignment }).run() : chain.setTextAlign(alignment).run();
 }
 
@@ -28,8 +35,16 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
   const drag = useRef<{ startX: number; startWidth: number; latest: number } | undefined>(undefined);
   const cleanup = useRef<() => void>(() => undefined);
   useEffect(() => { if (!drag.current) setWidth(typeof node.attrs.width === "number" ? node.attrs.width : undefined); }, [node.attrs.width]);
-  useEffect(() => () => { const current = drag.current; if (current) updateAttributes({ width: Math.round(current.latest) }); cleanup.current(); }, []);
-  return <NodeViewWrapper as="figure" className={`resizable-image${selected ? " image-selected" : ""}`} data-image-align={node.attrs.imageAlign ?? undefined} style={node.attrs.imageAlign ? { textAlign: node.attrs.imageAlign } : undefined}>
+  useEffect(() => () => { drag.current = undefined; cleanup.current(); }, []);
+  const openMenu = (anchor: PopupAnchor) => {
+    if (!editor.isEditable) return;
+    const pos = getPos(); if (typeof pos !== "number") return;
+    editor.commands.setNodeSelection(pos);
+    editor.view.dom.dispatchEvent(new CustomEvent("uranus-table-menu", { detail: { kind: "image", anchor } }));
+  };
+  return <NodeViewWrapper as="figure" className={`resizable-image${selected ? " image-selected" : ""}`} data-image-align={node.attrs.imageAlign ?? undefined} style={node.attrs.imageAlign ? { textAlign: node.attrs.imageAlign } : undefined} onContextMenu={(event: React.MouseEvent) => {
+    if (!editor.isEditable) return; event.preventDefault(); event.stopPropagation(); openMenu(pointAnchor(event.currentTarget as HTMLElement, event.clientX, event.clientY));
+  }}>
     <span className="image-frame" draggable data-drag-handle contentEditable={false}>
     <img src={String(node.attrs.src)} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} onClick={() => {
       const pos = getPos(); if (typeof pos === "number") editor.commands.setNodeSelection(pos);
@@ -47,15 +62,18 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
         current.latest = next; setWidth(next);
       };
       const stop = () => {
-        const current = drag.current; if (current && editor.isEditable) updateAttributes({ width: Math.round(current.latest) });
+        const current = drag.current; if (current && editor.isEditable) { editor.view.dispatch(closeHistory(editor.state.tr)); updateAttributes({ width: Math.round(current.latest) }); }
         drag.current = undefined; cleanup.current();
       };
+      const cancel = () => { drag.current = undefined; setWidth(initial); cleanup.current(); };
+      const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); cancel(); } };
       cleanup.current = () => {
         window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop);
-        window.removeEventListener("pointercancel", stop); window.removeEventListener("blur", stop);
+        window.removeEventListener("pointercancel", cancel); window.removeEventListener("blur", cancel); window.removeEventListener("keydown", key);
       };
-      window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", stop); window.addEventListener("blur", stop);
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", cancel); window.addEventListener("blur", cancel); window.addEventListener("keydown", key);
     }} />}
+    {editor.isEditable && selected && <button className="image-menu-button" aria-label="图片操作" aria-haspopup="dialog" onMouseDown={event => event.preventDefault()} onClick={event => openMenu(event.currentTarget)}>•••</button>}
     </span>
   </NodeViewWrapper>;
 }
@@ -87,17 +105,26 @@ const slashCommands = [
 
 function executeSlash(editor: Editor, query: string, command: (typeof slashCommands)[number]) {
   const to = editor.state.selection.from;
+  if (command.key === "table") {
+    if (!tableContext(editor)) editor.view.dom.dispatchEvent(new CustomEvent("uranus-table-picker", { detail: { from: Math.max(0, to - query.length - 1), to } }));
+    return;
+  }
   editor.chain().focus().deleteRange({ from: Math.max(0, to - query.length - 1), to }).run();
   command.run(editor);
 }
 
-export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: { note: NoteDetail; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; readOnlyBecauseDeleted: boolean }) {
+export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted, titleHost }: { note: NoteDetail; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; readOnlyBecauseDeleted: boolean; titleHost?: HTMLElement | null }) {
+  const [initialParts] = useState(() => splitNoteTitle(note.content));
+  const titleNode = useRef(initialParts.title);
+  const [titleValue, setTitleValue] = useState(() => titleText(initialParts.title));
   const preferenceKey = `uranus.readOnly.${note.id}`;
   const [readOnlyPreference, setReadOnly] = useState(readPreference(preferenceKey) === "1");
   const readOnly = readOnlyBecauseDeleted || readOnlyPreference;
-  const { widthMode, setWidthMode } = useUiStore();
-  const [tablePicker, setTablePicker] = useState(false);
+  const { widthMode, setWidthMode, editorFontSize } = useUiStore();
+  const [tablePicker, setTablePicker] = useState<{ anchor: PopupAnchor; range?: { from: number; to: number } } | null>(null);
   const [editorError, setEditorError] = useState("");
+  const [upload, setUpload] = useState<{ file: File; busy: boolean; error: string } | null>(null);
+  const uploadBookmark = useRef<SelectionBookmark | null>(null);
   useEffect(() => { const handler = (event: Event) => setEditorError((event as CustomEvent<string>).detail); window.addEventListener("uranus-editor-error", handler); return () => window.removeEventListener("uranus-editor-error", handler); }, []);
   const [findOpen, setFindOpen] = useState(false);
   const [find, setFind] = useState("");
@@ -118,8 +145,9 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
     ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), SearchHighlight,
   ], []);
   const editor = useEditor({
-    extensions, content: note.content, editable: !readOnly, immediatelyRender: false,
+    extensions, content: initialParts.body, editable: !readOnly, immediatelyRender: false,
     editorProps: { attributes: { class: "prose-editor", "aria-label": "笔记正文" }, handleKeyDown: (_view, event) => {
+      if (event.isComposing) return false;
       const current = slashState.current; const instance = editorRef.current;
       if (current.query === null || !instance) return false;
       const filtered = slashCommands.filter((command) => `${command.key} ${command.label}`.toLocaleLowerCase().includes(current.query!.toLocaleLowerCase()));
@@ -135,7 +163,7 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
     } },
     onUpdate: ({ editor: instance }) => {
       setEditorError("");
-      onChange(instance.getJSON() as ContentNode);
+      onChange(joinNoteTitle(titleNode.current, instance.getJSON() as ContentNode));
       const { $from } = instance.state.selection;
       const before = $from.parent.textBetween(0, $from.parentOffset, undefined, "\ufffc");
       const match = /^\/([^\s/]*)$/.exec(before);
@@ -145,22 +173,56 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
     onBlur: () => { void onFlush(); },
   });
   editorRef.current = editor;
-  useEffect(() => { editor?.setEditable(!readOnly, false); }, [editor, readOnly]);
+  useEffect(() => {
+    const toolbar = editor?.view.dom.closest(".editor-shell")?.querySelector<HTMLElement>(".format-toolbar");
+    if (!toolbar) return;
+    const update = () => {
+      toolbar.dataset.overflowLeft = String(toolbar.scrollLeft > 2);
+      toolbar.dataset.overflowRight = String(toolbar.scrollWidth - toolbar.clientWidth - toolbar.scrollLeft > 2);
+    };
+    update(); const observer = new ResizeObserver(update); observer.observe(toolbar);
+    toolbar.addEventListener("scroll", update, { passive: true });
+    return () => { observer.disconnect(); toolbar.removeEventListener("scroll", update); };
+  }, [editor, readOnly]);
+  useEffect(() => {
+    if (!editor) return;
+    const map = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => { if (uploadBookmark.current) uploadBookmark.current = uploadBookmark.current.map(transaction.mapping); };
+    editor.on("transaction", map); return () => { editor.off("transaction", map); uploadBookmark.current = null; };
+  }, [editor]);
+  useEffect(() => { editor?.setEditable(!readOnly, false); if (readOnly) setTablePicker(null); }, [editor, readOnly]);
+  useEffect(() => {
+    if (!editor) return;
+    const picker = (event: Event) => { const range = (event as CustomEvent<{ from: number; to: number }>).detail; setTablePicker({ anchor: editor.view.coordsAtPos(editor.state.selection.from), range }); };
+    const keyboard = (event: KeyboardEvent) => {
+      if (!editor.isEditable || event.isComposing || !(event.key === "F10" && event.shiftKey)) return;
+      const image = editor.state.selection instanceof NodeSelection && editor.state.selection.node.type.name === "image";
+      if (!image && !tableContext(editor)) return;
+      event.preventDefault();
+      editor.view.dom.dispatchEvent(new CustomEvent("uranus-table-menu", { detail: { kind: image ? "image" : "cell", anchor: editor.view.coordsAtPos(editor.state.selection.from) } }));
+    };
+    editor.view.dom.addEventListener("uranus-table-picker", picker); editor.view.dom.addEventListener("keydown", keyboard);
+    return () => { editor.view.dom.removeEventListener("uranus-table-picker", picker); editor.view.dom.removeEventListener("keydown", keyboard); };
+  }, [editor]);
   useEffect(() => () => { void onFlush(); }, []);
   useEffect(() => { if (editor) setFindCount(updateEditorSearch(editor, findOpen ? find : "", findIndex)); }, [editor, find, findIndex, findOpen]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.isComposing || !(event.metaKey || event.ctrlKey)) return;
       if (event.key.toLowerCase() === "f") { event.preventDefault(); setFindOpen(true); }
       if (event.altKey && event.key.toLowerCase() === "p") { event.preventDefault(); toggleReadOnly(); }
-      if (event.altKey && event.key.toLowerCase() === "t" && !readOnly) { event.preventDefault(); editor?.chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run(); }
+      if (event.altKey && event.key.toLowerCase() === "t" && !readOnly && editor && !tableContext(editor)) { event.preventDefault(); setTablePicker({ anchor: editor.view.coordsAtPos(editor.state.selection.from) }); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   });
   if (!editor) return <div className="center-message">正在加载编辑器…</div>;
-  const alignmentActive = (value: string) => editor.isActive("image") ? editor.getAttributes("image").imageAlign === value : editor.isActive({ textAlign: value });
-  const alignmentDisabled = (value: string) => readOnly || (!editor.isActive("image") && !editor.can().setTextAlign(value));
+  const alignmentActive = (value: string) => {
+    const selection = editor.state.selection;
+    if (selection instanceof CellSelection) { let active = true; selection.forEachCell(node => { if ((node.attrs.textAlign ?? (node.type.name === "tableHeader" ? "center" : "left")) !== value) active = false; }); return active; }
+    return editor.isActive("image") ? editor.getAttributes("image").imageAlign === value : editor.isActive({ textAlign: value });
+  };
+  const alignmentDisabled = (value: string) => readOnly || (!(editor.state.selection instanceof CellSelection) && !editor.isActive("image") && !editor.can().setTextAlign(value));
+  const alignmentTarget = editor.state.selection instanceof CellSelection ? "所选单元格" : editor.isActive("image") ? "图片" : "段落或标题";
   const filteredSlashCommands = slashCommands.filter((command) => slashQuery !== null && `${command.key} ${command.label}`.toLocaleLowerCase().includes(slashQuery.toLocaleLowerCase()));
   const activeSlashIndex = filteredSlashCommands.length ? (slashIndex % filteredSlashCommands.length + filteredSlashCommands.length) % filteredSlashCommands.length : 0;
   const toggleReadOnly = () => {
@@ -177,8 +239,36 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
     if (!/^(https?:|mailto:)/i.test(href)) return alert("仅允许 http、https 或 mailto 链接");
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
   };
-  return <div className={`editor-shell width-${widthMode} ${readOnly ? "readonly" : ""}`}>
-    <div className="format-toolbar" aria-label="格式工具栏">
+  const uploadImage = async (file: File, retry = false) => {
+    if (upload?.busy || readOnly) return;
+    if (!retry) uploadBookmark.current = editor.state.selection.getBookmark();
+    setUpload({ file, busy: true, error: "" });
+    try {
+      const attachment = await uploadAttachment(note.id, file);
+      if (editor.isDestroyed) return;
+      if (!editor.isEditable) { setUpload({ file, busy: false, error: "当前为阅读模式，请返回编辑后重试。" }); return; }
+      const selection = uploadBookmark.current?.resolve(editor.state.doc) ?? editor.state.selection;
+      const inserted = editor.chain().command(({ tr }) => { tr.setSelection(selection); return true; }).insertContent({ type: "image", attrs: { src: attachment.url, attachmentId: attachment.id, alt: attachment.fileName } }).run();
+      if (!inserted) throw new Error("图片已上传但未插入，请检查正文预算后重试。");
+      uploadBookmark.current = null; setUpload(null); editor.view.focus();
+    } catch (error) { if (!editor.isDestroyed) setUpload({ file, busy: false, error: (error as Error).message }); }
+  };
+  const titleField = <textarea className="note-header-title" aria-label="笔记标题" placeholder="添加标题" rows={1} value={titleValue} readOnly={readOnly} title={titleValue || "添加标题"}
+      onChange={event => {
+        const value = event.target.value;
+        titleNode.current = updateTitle(titleNode.current, value);
+        setTitleValue(value);
+        onChange(joinNoteTitle(titleNode.current, editor.getJSON() as ContentNode));
+      }}
+      onBlur={() => { void onFlush(); }}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); editor.commands.focus("start"); }
+      }} />;
+  return <div className={`editor-shell width-${widthMode} font-size-${editorFontSize} ${readOnly ? "readonly" : ""}`}>
+    {titleHost ? createPortal(titleField, titleHost) : titleField}
+    <div className="format-toolbar" aria-label={readOnly ? "阅读工具栏" : "格式工具栏"} onFocusCapture={event => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })}>
+      {!readOnly && <>
       <Tool label="撤销" disabled={readOnly} onClick={() => editor.chain().focus().undo().run()}><Undo2 /></Tool>
       <Tool label="重做" disabled={readOnly} onClick={() => editor.chain().focus().redo().run()}><Redo2 /></Tool>
       <span className="separator" />
@@ -191,9 +281,9 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
       <Tool label="高亮" disabled={readOnly} active={editor.isActive("highlight")} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Tool>
       <Tool label="行内代码" disabled={readOnly} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
       <span className="separator" />
-      <Tool label="靠左对齐" disabled={alignmentDisabled("left")} active={alignmentActive("left")} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
-      <Tool label="居中对齐" disabled={alignmentDisabled("center")} active={alignmentActive("center")} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
-      <Tool label="靠右对齐" disabled={alignmentDisabled("right")} active={alignmentActive("right")} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
+      <Tool label="靠左对齐" hint={alignmentTarget} disabled={alignmentDisabled("left")} active={alignmentActive("left")} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
+      <Tool label="居中对齐" hint={alignmentTarget} disabled={alignmentDisabled("center")} active={alignmentActive("center")} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
+      <Tool label="靠右对齐" hint={alignmentTarget} disabled={alignmentDisabled("right")} active={alignmentActive("right")} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
       <span className="separator" />
       <Tool label="无序列表" disabled={readOnly} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
       <Tool label="有序列表" disabled={readOnly} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>
@@ -201,22 +291,22 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
       <Tool label="引用" disabled={readOnly} active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote /></Tool>
       <Tool label="分隔线" disabled={readOnly} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus /></Tool>
       <Tool label="链接" disabled={readOnly} active={editor.isActive("link")} onClick={link}><Link2 /></Tool>
-      <Tool label="表格" disabled={readOnly} onClick={() => setTablePicker(v => !v)}><Table2 /></Tool>
-      <label className={`file-tool ${readOnly ? "disabled" : ""}`} title="上传图片" aria-label="上传图片"><ImagePlus /><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={readOnly} onChange={async (event) => {
+      <Tool label="表格" hint={tableContext(editor) ? "暂不支持嵌套表格" : "插入表格"} disabled={readOnly || !!tableContext(editor)} onClick={() => setTablePicker(v => v ? null : { anchor: editor.view.dom.closest(".editor-shell")!.querySelector<HTMLElement>('[aria-label="表格"]')! })}><Table2 /></Tool>
+      <label className={`file-tool ${readOnly || upload?.busy ? "disabled" : ""}`} title="上传图片" aria-label="上传图片"><ImagePlus /><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={readOnly || upload?.busy} onChange={async (event) => {
         const file = event.target.files?.[0];
         event.target.value = "";
         if (!file) return;
-        try {
-          const attachment = await uploadAttachment(note.id, file);
-          editor.chain().focus().insertContent({ type: "image", attrs: { src: attachment.url, attachmentId: attachment.id, alt: attachment.fileName } }).run();
-        } catch (error) { alert((error as Error).message); }
+        await uploadImage(file);
       }} /></label>
+      </>}
+      {readOnly && <button onClick={() => setFindOpen(true)}>在笔记中查找</button>}
       <span className="spacer" />
       <Tool label={widthMode === "fluid" ? "切换舒适阅读" : "切换自适应宽版"} active={widthMode === "reading"} onClick={() => setWidthMode(widthMode === "fluid" ? "reading" : "fluid")}><MoveHorizontal /></Tool>
-      <Tool label={readOnly ? "退出只读" : "只读模式"} active={readOnly} disabled={readOnlyBecauseDeleted} onClick={toggleReadOnly}><Eye /></Tool>
+      {!readOnlyBecauseDeleted && <Tool label={readOnly ? "退出只读" : "只读模式"} active={readOnly} onClick={toggleReadOnly}><Eye /></Tool>}
     </div>
     {editorError && <div className="error-banner" role="alert">{editorError}</div>}
-    {tablePicker && !readOnly && <TablePicker editor={editor} close={() => { setTablePicker(false); editor.commands.focus(); }} />}
+    {upload && <div className="draft-banner" role="status"><span>{upload.busy ? "正在上传图片：" : "图片上传未完成："}{upload.file.name}{upload.error && " · " + upload.error}</span>{!upload.busy && <><button disabled={readOnly} onClick={() => void uploadImage(upload.file, true)}>重试上传</button><button onClick={() => { uploadBookmark.current = null; setUpload(null); }}>取消上传</button></>}</div>}
+    {tablePicker && !readOnly && <TablePicker editor={editor} anchor={tablePicker.anchor} range={tablePicker.range} close={() => setTablePicker(null)} />}
     <TableTools editor={editor} readOnly={readOnly} />
     {readOnly && <div className="readonly-banner">只读模式{readOnlyBecauseDeleted ? " · 最近删除中的笔记不可编辑" : " · 用于防止误触，不是安全权限"}</div>}
     {findOpen && <div className="find-bar"><input autoFocus placeholder="在笔记中查找" value={find} onChange={(event) => { setFind(event.target.value); setFindIndex(0); }} onKeyDown={(event) => { if (event.key === "Enter" && matches) { event.preventDefault(); setFindIndex((value) => event.shiftKey ? value - 1 : value + 1); } if (event.key === "Escape") { setFind(""); setFindOpen(false); } }} /><span>{find && matches ? `${(findIndex % matches + matches) % matches + 1}/${matches}` : "无匹配"}</span><button onClick={() => { setFind(""); setFindOpen(false); }}>完成</button></div>}
@@ -227,6 +317,6 @@ export function NoteEditor({ note, onChange, onFlush, readOnlyBecauseDeleted }: 
   </div>;
 }
 
-function Tool({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
-  return <button type="button" title={label} aria-label={label} aria-pressed={active} className={active ? "active" : ""} disabled={disabled} onMouseDown={(event) => { event.preventDefault(); onClick(); }} onClick={event => { if (event.detail === 0) onClick(); }}>{children}</button>;
+function Tool({ label, hint, active, disabled, onClick, children }: { label: string; hint?: string; active?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" title={hint ? label + " · " + hint : label} aria-label={label} aria-description={hint} aria-pressed={active} className={active ? "active" : ""} disabled={disabled} onMouseDown={(event) => { event.preventDefault(); }} onClick={onClick}>{children}</button>;
 }

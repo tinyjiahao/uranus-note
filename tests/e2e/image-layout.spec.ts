@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { testApiToken } from "./credentials";
 
 async function upload(page: Page, width = 120) {
@@ -30,6 +30,11 @@ test("images align independently in body and table cells and persist in readonly
   await expect(bodyImage).toHaveAttribute("data-image-align", "center");
   await page.getByRole("button", { name: "重做", exact: true }).click();
   await expect(bodyImage).toHaveAttribute("data-image-align", "right");
+  await bodyImage.locator("img").click({ button: "right" });
+  await page.getByRole("button", { name: "恢复默认对齐", exact: true }).click();
+  await expect(bodyImage).not.toHaveAttribute("data-image-align");
+  await page.getByRole("button", { name: "图片右对齐", exact: true }).click();
+  await page.getByRole("button", { name: "关闭菜单" }).click();
   await editor.press("ControlOrMeta+End"); await editor.press("ArrowDown"); await editor.press("Enter");
   await page.getByRole("button", { name: "表格", exact: true }).click();
   await page.getByRole("button", { name: "2 行 2 列", exact: true }).click();
@@ -45,6 +50,10 @@ test("images align independently in body and table cells and persist in readonly
   await cellImage.locator("img").click();
   await page.getByRole("button", { name: "居中对齐", exact: true }).click();
   await expect(cellImage).toHaveCSS("text-align", "center");
+  await cellImage.locator("img").click({ button: "right" });
+  await page.getByRole("button", { name: "表格操作 ›" }).click();
+  await expect(page.getByRole("button", { name: "追加一行", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭菜单" }).click();
   await expect(page.locator(".error-banner")).toHaveCount(0);
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible();
   await page.reload();
@@ -54,7 +63,7 @@ test("images align independently in body and table cells and persist in readonly
   await expect(cellImage).toHaveCSS("text-align", "center");
   await cellImage.locator("img").click();
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
-  for (const name of ["靠左对齐", "居中对齐", "靠右对齐"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+  for (const name of ["靠左对齐", "居中对齐", "靠右对齐"]) await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
   for (const handle of await editor.locator(".image-resize-handle").all()) await expect(handle).toBeHidden();
   await page.setViewportSize({ width: 768, height: 900 });
   expect(await cellImage.evaluate(el => el.querySelector("img")!.getBoundingClientRect().width <= el.closest("td")!.getBoundingClientRect().width)).toBe(true);

@@ -26,7 +26,9 @@ export class NoteSaveQueue {
     this.revision = revision;
   }
 
-  updateRevision(revision: number) { if (!this.running && !this.failed && !this.pending) this.revision = revision; }
+  // Blur/unmount callbacks can still hold an earlier React render's note.
+  // Never roll back a revision already confirmed by our own successful save.
+  updateRevision(revision: number) { if (!this.running && !this.failed && !this.pending) this.revision = Math.max(this.revision, revision); }
 
   localContent() { return this.latestContent; }
   hasUnsaved() { return this.running || Boolean(this.pending || this.failed); }

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { testApiToken } from "./credentials";
 
 test("login, edit, persist and search a note", async ({ page }) => {
@@ -11,6 +11,7 @@ test("login, edit, persist and search a note", async ({ page }) => {
   await expect(page).toHaveURL(/\/notes\/\d+$/);
   const editor = page.locator(".prose-editor");
   await expect(editor).toBeVisible();
+  await page.getByRole("textbox", { name: "笔记标题", exact: true }).fill(title);
   // Click the visible blank canvas, not a locator that targets the small text block.
   const canvas = await page.locator(".editor-content").boundingBox();
   if (!canvas) throw new Error("Editor canvas is missing");
@@ -21,6 +22,8 @@ test("login, edit, persist and search a note", async ({ page }) => {
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.reload();
   await expect(editor).toContainText(title);
+  await expect(page.locator(".editor-meta .note-header-title")).toHaveValue(title);
+  await expect(page.locator(".editor-meta .note-header-title")).toBeVisible();
   await editor.click();
   await page.keyboard.press("Meta+f");
   const find = page.getByPlaceholder("在笔记中查找");

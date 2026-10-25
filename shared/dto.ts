@@ -7,6 +7,7 @@ export type ContentNode = {
 };
 
 export type NoteListItem = {
+  searchMatch?: { source: "title" | "body"; text: string; ranges: [number, number][]; normalized: true; before?: boolean; after?: boolean };
   id: number;
   folderId: number;
   title: string;

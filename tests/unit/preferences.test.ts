@@ -1,5 +1,13 @@
 import { expect, it } from "vitest";
-import { defaultSort, noteTime, parseSort, useUiStore } from "../../src/state/ui";
+import { defaultSort, noteTime, parseSort, parseEditorFontSize, useUiStore } from "../../src/state/ui";
+
+it("validates font-size preferences and updates even when storage is unavailable", () => {
+  for (const value of [null, "", "NaN", "15", "100", "14px", "-1"]) expect(parseEditorFontSize(value)).toBe(14);
+  for (const size of [14, 16, 18, 20]) expect(parseEditorFontSize(String(size))).toBe(size);
+  useUiStore.getState().setEditorFontSize(20);
+  expect(useUiStore.getState().editorFontSize).toBe(20);
+  expect(useUiStore.getState().storageWarning).toBe(true);
+});
 
 it("uses validated preference defaults and tolerates unavailable browser storage", () => {
   for (const value of [null, "broken", '{}', '{"by":"title;select","dir":"desc"}', '{"by":"title","dir":"sideways"}']) expect(parseSort(value)).toEqual(defaultSort);

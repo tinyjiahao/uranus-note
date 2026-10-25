@@ -1,88 +1,146 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
-import { CellSelection, TableMap, selectedRect } from "@tiptap/pm/tables";
-import { belowTable, setWidths, tableContext, tableWidths } from "./tables";
+import { CellSelection, selectedRect } from "@tiptap/pm/tables";
+import { NodeSelection } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
+import { belowTable, beforeTable, clearCells, setWidths, tableContext, tableWidths } from "./tables";
+import { Popup, type PopupAnchor } from "../Popup";
+import { validateAndDeriveContent } from "../../../shared/content";
 
-export function TablePicker({ editor, close }: { editor: Editor; close: () => void }) {
-  const [rows, setRows] = useState(2); const [cols, setCols] = useState(2); const [header, setHeader] = useState(true);
-  const picker = useRef<HTMLDivElement>(null);
-  useEffect(() => { picker.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, []);
-  const insert = (r = rows, c = cols) => { editor.chain().focus().insertTable({ rows: r, cols: c, withHeaderRow: header }).run(); close(); };
-  return <div className="table-picker" ref={picker} role="group" aria-label="插入表格" onKeyDown={e => { if (e.key === "Escape") { close(); editor.commands.focus(); } }}>
-    <div className="table-grid">{Array.from({ length: 36 }, (_, i) => <button key={i} aria-label={`${Math.floor(i / 6) + 1} 行 ${i % 6 + 1} 列`} onClick={() => insert(Math.floor(i / 6) + 1, i % 6 + 1)}>{Math.floor(i / 6) + 1}×{i % 6 + 1}</button>)}</div>
-    <label>行 <input aria-label="表格行数" type="number" min="1" max="6" value={rows} onChange={e => setRows(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} /></label>
-    <label>列 <input aria-label="表格列数" type="number" min="1" max="6" value={cols} onChange={e => setCols(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} /></label>
-    <label><input type="checkbox" checked={header} onChange={e => setHeader(e.target.checked)} />表头</label>
-    <button onClick={() => insert()}>插入</button><button onClick={close}>取消</button>
-  </div>;
-}
-export function TableTools({ editor, readOnly }: { editor: Editor; readOnly: boolean }) {
-  const [, refresh] = useState(0); const [menu, setMenu] = useState(""); const [width, setWidth] = useState(120); const [message, setMessage] = useState("");
-  const popup = useRef<HTMLDivElement>(null);
-  const anchor = useRef<HTMLElement | null>(null);
-  const [position, setPosition] = useState({ left: 0, top: 0 });
+export function TablePicker({ editor, close, anchor, range }: { editor: Editor; close: () => void; anchor: PopupAnchor; range?: { from: number; to: number } | undefined }) {
+  const [rows, setRows] = useState("2"), [cols, setCols] = useState("2"), [header, setHeader] = useState(true);
+  const [preview, setPreview] = useState([2, 2]), [custom, setCustom] = useState(false), [error, setError] = useState("");
+  const grid = useRef<HTMLDivElement>(null);
+  const committing = useRef(false);
+  const closeRef = useRef(close); closeRef.current = close;
   useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ kind: string; anchor: HTMLElement }>).detail;
-      anchor.current = detail.anchor;
-      const rect = detail.anchor.getBoundingClientRect();
-      setPosition({ left: Math.max(8, Math.min(rect.left, window.innerWidth - 304)), top: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 340)) });
-      setWidth(tableWidths(editor)[selectedRect(editor.state).left] ?? 120); setMessage(""); setMenu(detail.kind);
+    const update = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (transaction.docChanged && !committing.current) { closeRef.current(); window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: "正文已变化，请重新选择表格插入位置。" })); }
     };
-    editor.view.dom.addEventListener("uranus-table-menu", open);
-    return () => editor.view.dom.removeEventListener("uranus-table-menu", open);
+    editor.on("transaction", update); return () => { editor.off("transaction", update); };
   }, [editor]);
-  useLayoutEffect(() => { if (menu) popup.current?.focus({ preventScroll: true }); }, [menu]);
-  useEffect(() => {
-    if (!menu) return;
-    const outside = (event: Event) => { if (!popup.current?.contains(event.target as Node) && !anchor.current?.contains(event.target as Node)) setMenu(""); };
-    const scroll = (event: Event) => { if (!popup.current?.contains(event.target as Node)) setMenu(""); };
-    document.addEventListener("pointerdown", outside); window.addEventListener("scroll", scroll, true); window.addEventListener("resize", scroll);
-    return () => { document.removeEventListener("pointerdown", outside); window.removeEventListener("scroll", scroll, true); window.removeEventListener("resize", scroll); };
-  }, [menu]);
-  useEffect(() => { const update = () => { refresh(v => v + 1); if (!tableContext(editor)) setMenu(""); }; editor.on("transaction", update); return () => { editor.off("transaction", update); }; }, [editor]);
-  useEffect(() => { if (readOnly) setMenu(""); }, [readOnly]);
-  const table = tableContext(editor);
-  if (!table || readOnly || !menu) return null;
-  const selection = editor.state.selection;
-  const map = TableMap.get(table.node);
-  let cellPos = selection.$from.before(selection.$from.depth);
-  for (let depth = selection.$from.depth; depth > 0; depth--) if (["tableCell", "tableHeader"].includes(selection.$from.node(depth).type.name)) { cellPos = selection.$from.before(depth); break; }
-  if (selection instanceof CellSelection) cellPos = selection.$anchorCell.pos;
-  const relative = cellPos - table.start;
-  const index = map.map.indexOf(relative) % map.width;
-  const attrs: Record<string, unknown>[] = [];
-  if (selection instanceof CellSelection) selection.forEachCell(node => attrs.push({ ...node.attrs, textAlign: node.attrs.textAlign ?? node.attrs.align ?? (node.type.name === "tableHeader" ? "center" : "left") }));
-  else { const cell = editor.state.doc.nodeAt(cellPos); if (cell) attrs.push({ ...cell.attrs, textAlign: cell.attrs.textAlign ?? cell.attrs.align ?? (cell.type.name === "tableHeader" ? "center" : "left") }); }
-  const mixed = (key: string, fallback: string) => new Set(attrs.map(a => a[key] ?? fallback)).size > 1 ? "mixed" : String(attrs[0]?.[key] ?? fallback);
-  const run = (action: () => unknown) => { action(); setMenu(""); editor.view.focus(); };
-  const remove = (kind: "row" | "column" | "table") => {
-    const rect = selection instanceof CellSelection ? map.rectBetween(selection.$anchorCell.pos - table.start, selection.$headCell.pos - table.start) : null;
-    const all = kind === "table" || (kind === "row" && (map.height === 1 || rect && rect.bottom - rect.top === map.height)) || (kind === "column" && (map.width === 1 || rect && rect.right - rect.left === map.width));
-    if (all && table.node.textContent.trim() && !confirm("删除整张非空表格？可通过撤销恢复。")) return;
-    run(() => all ? editor.commands.deleteTable() : kind === "row" ? editor.commands.deleteRow() : editor.commands.deleteColumn());
-    setMessage("已删除，可使用工具栏撤销");
+  const r = Number(rows), c = Number(cols);
+  const valid = Number.isInteger(r) && r >= 1 && r <= 100 && Number.isInteger(c) && c >= 1 && c <= 30;
+  const insert = (row = r, col = c) => {
+    if (!editor.isEditable || tableContext(editor)) return;
+    committing.current = true;
+    try {
+      const chain = editor.chain();
+      if (range) chain.deleteRange(range);
+      chain.insertTable({ rows: row, cols: col, withHeaderRow: header });
+      if (chain.command(({ tr }) => { validateAndDeriveContent(tr.doc.toJSON()); closeHistory(tr); return true; }).run()) { close(); editor.view.focus(); }
+    } catch (cause) { setError((cause as Error).message); }
+    finally { committing.current = false; }
   };
-  const menuButton = (key: string, label: string) => <button aria-expanded={menu === key} onClick={() => { if (key === "more") setWidth(tableWidths(editor)[index] ?? 120); setMenu(menu === key ? "" : key); }}>{label}</button>;
-  return createPortal(<div ref={popup} tabIndex={-1} style={position} className="table-context-menu" role="dialog" aria-label="表格操作" onMouseDown={e => { if ((e.target as HTMLElement).closest("button")) e.preventDefault(); }} onKeyDown={e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setMenu(""); anchor.current?.focus(); } }}>
-    <header><strong>{menu === "row" ? "行操作" : menu === "column" ? "列操作" : "表格操作"}</strong><button aria-label="关闭表格菜单" onClick={() => { setMenu(""); anchor.current?.focus(); }}>关闭</button></header>
-    <div className="table-menu-tabs">{menuButton("row", "行")}{menuButton("column", "列")}{menuButton("align", "对齐")}{menuButton("more", "更多")}</div>
-    <button onClick={() => run(() => belowTable(editor))}>在表格下方继续输入</button>
-    {message && <span role="status">{message}</span>}
-    {menu && <div className="table-menu">
-      {menu === "row" && <><button onClick={() => run(() => editor.commands.addRowBefore())}>上方插行</button><button onClick={() => run(() => editor.commands.addRowAfter())}>下方插行</button><button onClick={() => remove("row")}>删除所选行</button></>}
-      {menu === "column" && <><button onClick={() => run(() => editor.commands.addColumnBefore())}>左侧插列</button><button onClick={() => run(() => editor.commands.addColumnAfter())}>右侧插列</button><button onClick={() => remove("column")}>删除所选列</button></>}
-      {menu === "align" && <><label>水平 <select aria-label="水平对齐" value={mixed("textAlign", "left")} onChange={e => editor.commands.setCellAttribute("textAlign", e.target.value)}><option value="mixed" disabled>混合</option><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></label><label>垂直 <select aria-label="垂直对齐" value={mixed("verticalAlign", "top")} onChange={e => editor.commands.setCellAttribute("verticalAlign", e.target.value)}><option value="mixed" disabled>混合</option><option value="top">顶部</option><option value="middle">居中</option><option value="bottom">底部</option></select></label></>}
-      {menu === "more" && <>
-        <label>当前列宽 <input aria-label="当前列宽" type="number" min="64" max="2000" value={width} onChange={e => setWidth(Number(e.target.value))} /></label>
-        <button disabled={index < 0 || !Number.isFinite(width) || width < 64 || width > 2000} onClick={() => run(() => { const widths = tableWidths(editor); widths[index] = width; setWidths(editor, widths); })}>应用列宽</button>
-        <button onClick={() => run(() => setWidths(editor, null))}>恢复自适应</button>
-        <button onClick={() => run(() => setWidths(editor, tableWidths(editor)))}>按列宽显示</button>
-        <button onClick={() => run(() => { const widths = tableWidths(editor); setWidths(editor, widths.map(() => Math.max(64, Math.round(widths.reduce((a, b) => a + b, 0) / widths.length)))); })}>平均分配列宽</button>
-        <button onClick={() => run(() => editor.commands.toggleHeaderRow())}>表头开关</button>
-        <button onClick={() => remove("row")}>删除所选行</button><button onClick={() => remove("column")}>删除所选列</button><button onClick={() => remove("table")}>删除表格</button>
-      </>}
-    </div>}
-  </div>, document.body);
+  return <Popup anchor={anchor} title="插入表格" close={close} restoreFocus={() => editor.view.focus()} className="table-picker" back={custom ? () => setCustom(false) : undefined}>
+    {!custom ? <>
+      <p aria-live="polite">{preview[0]} 行 × {preview[1]} 列</p>
+      <div ref={grid} className="table-grid" role="grid" aria-label="表格尺寸" onKeyDown={event => {
+        if (event.nativeEvent.isComposing) return;
+        const index = Number((event.target as HTMLElement).dataset.index);
+        const delta = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -6, ArrowDown: 6 } as Record<string, number>)[event.key];
+        if (delta !== undefined) { event.preventDefault(); grid.current?.querySelector<HTMLButtonElement>('[data-index="' + Math.max(0, Math.min(35, index + delta)) + '"]')?.focus(); }
+      }}>{Array.from({ length: 36 }, (_, i) => {
+        const row = Math.floor(i / 6) + 1, col = i % 6 + 1;
+        return <button key={i} data-index={i} data-initial-focus={i === 7 ? "" : undefined} tabIndex={row === preview[0] && col === preview[1] ? 0 : -1} aria-label={row + " 行 " + col + " 列"} className={row <= preview[0]! && col <= preview[1]! ? "chosen" : ""} onFocus={() => setPreview([row, col])} onPointerEnter={() => setPreview([row, col])} onClick={() => insert(row, col)} />;
+      })}</div>
+      <button aria-haspopup="true" onClick={() => setCustom(true)}>自定义尺寸…</button>
+    </> : <>
+      <label>行数<input aria-label="表格行数" type="number" min="1" max="100" value={rows} onChange={e => setRows(e.target.value)} /></label>
+      <label>列数<input aria-label="表格列数" type="number" min="1" max="30" value={cols} onChange={e => setCols(e.target.value)} /></label>
+      <p>1—100 行、1—30 列；必须为整数。</p>
+      {!valid && <p role="alert">请输入范围内的正整数。</p>}
+      <button disabled={!valid} onClick={() => insert()}>插入</button>
+    </>}
+    <label><input type="checkbox" checked={header} onChange={e => setHeader(e.target.checked)} />包含表头（计入总行数）</label>
+    {error && <p role="alert">{error}</p>}
+  </Popup>;
+}
+
+export type ObjectMenuEvent = { kind: string; anchor: PopupAnchor };
+export function TableTools({ editor, readOnly }: { editor: Editor; readOnly: boolean }) {
+  const [, refresh] = useState(0), [target, setTarget] = useState<ObjectMenuEvent | null>(null), [panel, setPanel] = useState(""), [width, setWidth] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const executing = useRef(false);
+  const openTarget = useRef(false);
+  const close = () => { openTarget.current = false; setTarget(null); setPanel(""); setHistory([]); };
+  useEffect(() => {
+    const open = (event: Event) => { if (!editor.isEditable) return; const detail = (event as CustomEvent<ObjectMenuEvent>).detail; openTarget.current = true; setTarget(detail); setPanel(detail.kind); setHistory([]); setWidth(""); };
+    const update = ({ transaction }: { transaction: { docChanged: boolean; selectionSet: boolean } }) => {
+      refresh(v => v + 1);
+      if (!executing.current && (transaction.docChanged || transaction.selectionSet)) {
+        if (openTarget.current && transaction.docChanged) window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: "目标内容已变化，菜单已关闭，请重新选择。" }));
+        close();
+      }
+    };
+    editor.view.dom.addEventListener("uranus-table-menu", open); editor.on("transaction", update);
+    return () => { editor.view.dom.removeEventListener("uranus-table-menu", open); editor.off("transaction", update); };
+  }, [editor]);
+  useEffect(() => { if (readOnly) close(); }, [readOnly]);
+  if (!target || readOnly) return null;
+  const context = tableContext(editor);
+  const image = editor.state.selection instanceof NodeSelection && editor.state.selection.node.type.name === "image";
+  if (!context && !image) return null;
+  const rect = context ? selectedRect(editor.state) : null;
+  const rowCount = rect ? rect.bottom - rect.top : 0, colCount = rect ? rect.right - rect.left : 0;
+  const rangeLabel = (axis: "row" | "column") => {
+    if (!rect) return "";
+    const start = axis === "row" ? rect.top : rect.left, end = axis === "row" ? rect.bottom : rect.right;
+    return "第 " + (start + 1) + (end > start + 1 ? "—" + end : "") + (axis === "row" ? " 行" : " 列");
+  };
+  const act = (action: () => unknown, keep = false) => {
+    executing.current = true;
+    try { editor.view.dispatch(closeHistory(editor.state.tr)); action(); editor.view.dispatch(closeHistory(editor.state.tr)); }
+    finally { executing.current = false; }
+    if (!keep) { close(); editor.view.focus(); } else refresh(v => v + 1);
+  };
+  const go = (next: string) => { setHistory(previous => [...previous, panel]); setPanel(next); if (next === "width" && rect) { const widths = tableWidths(editor).slice(rect.left, rect.right); setWidth(new Set(widths).size === 1 ? String(widths[0]) : ""); } };
+  const remove = (kind: "row" | "column" | "table") => {
+    if (!context || !rect) return;
+    const all = kind === "table" || kind === "row" && rowCount === rect.map.height || kind === "column" && colCount === rect.map.width;
+    let hasImage = false; context.node.descendants(node => { if (node.type.name === "image") hasImage = true; });
+    if (all && (context.node.textContent.trim() || hasImage) && !confirm("删除整张非空表格？可通过撤销恢复。")) return;
+    act(() => all ? editor.commands.deleteTable() : kind === "row" ? editor.commands.deleteRow() : editor.commands.deleteColumn());
+  };
+  const attrs: Record<string, unknown>[] = [], selection = editor.state.selection;
+  if (selection instanceof CellSelection) selection.forEachCell(node => attrs.push({ ...node.attrs, textAlign: node.attrs.textAlign ?? (node.type.name === "tableHeader" ? "center" : "left") }));
+  else if (rect) { const node = rect.table.nodeAt(rect.map.map[rect.top * rect.map.width + rect.left]!); if (node) attrs.push({ ...node.attrs, textAlign: node.attrs.textAlign ?? (node.type.name === "tableHeader" ? "center" : "left") }); }
+  const mixed = (key: string, fallback: string) => new Set(attrs.map(a => a[key] ?? fallback)).size > 1 ? "mixed" : String(attrs[0]?.[key] ?? fallback);
+  const title = panel === "row" ? rangeLabel("row") : panel === "column" || panel === "width" ? rangeLabel("column") : panel === "image" ? "图片操作" : panel === "align" || panel === "cell" ? "已选 " + rowCount * colCount + " 个单元格" : "表格操作";
+  return <Popup anchor={target.anchor} title={title} close={close} restoreFocus={() => editor.view.focus()} back={history.length ? () => { setPanel(history.at(-1)!); setHistory(history.slice(0, -1)); } : undefined}>
+    {panel === "row" && <>
+      <button onClick={() => act(() => editor.commands.addRowBefore())}>上方插行</button><button onClick={() => act(() => editor.commands.addRowAfter())}>下方插行</button>
+      <button onClick={() => act(() => clearCells(editor, "row"))}>清空所选行内容</button><hr /><button className="danger" onClick={() => remove("row")}>删除 {rowCount} 行</button>
+    </>}
+    {panel === "column" && <>
+      <button onClick={() => act(() => editor.commands.addColumnBefore())}>左侧插列</button><button onClick={() => act(() => editor.commands.addColumnAfter())}>右侧插列</button>
+      <button aria-haspopup="true" onClick={() => go("width")}>调整列宽…</button><button onClick={() => act(() => clearCells(editor, "column"))}>清空所选列内容</button><hr /><button className="danger" onClick={() => remove("column")}>删除 {colCount} 列</button>
+    </>}
+    {panel === "cell" && <>
+      <button aria-haspopup="true" onClick={() => go("row")}>行操作 ›</button><button aria-haspopup="true" onClick={() => go("column")}>列操作 ›</button><button aria-haspopup="true" onClick={() => go("align")}>单元格对齐 ›</button>
+      <button onClick={() => act(() => clearCells(editor))}>清空所选格</button><button aria-haspopup="true" onClick={() => go("more")}>表格操作 ›</button>
+    </>}
+    {panel === "width" && <>
+      <label>{colCount > 1 ? "应用到所选 " + colCount + " 列（px）" : rangeLabel("column") + "宽度（px）"}<input aria-label="当前列宽" type="number" min="64" max="2000" placeholder="混合值" value={width} onChange={e => setWidth(e.target.value)} /></label>
+      <p>64—2000 px；仅修改所选列。</p><button disabled={!Number.isInteger(Number(width)) || Number(width) < 64 || Number(width) > 2000} onClick={() => act(() => { const widths = tableWidths(editor); for (let i = rect!.left; i < rect!.right; i++) widths[i] = Number(width); setWidths(editor, widths); }, true)}>应用列宽</button>
+    </>}
+    {panel === "align" && <>
+      {([['textAlign', '单元格水平对齐', ['left', 'center', 'right'], ['左', '中', '右'], 'left'], ['verticalAlign', '单元格垂直对齐', ['top', 'middle', 'bottom'], ['上', '中', '下'], 'top']] as const).map(([key, label, values, labels, fallback]) => <div key={key} role="group" aria-label={label}><p>{label}{mixed(key, fallback) === "mixed" ? " · 混合" : ""}</p><div className="segmented">{values.map((value, i) => <button key={value} aria-label={label + "：" + labels[i]} aria-pressed={mixed(key, fallback) === value} onClick={() => act(() => editor.commands.setCellAttribute(key, value), true)}>{labels[i]}</button>)}</div></div>)}
+      <p>有独立对齐的内容保持原设置。</p>
+    </>}
+    {panel === "more" && <>
+      <button onClick={() => act(() => { editor.commands.setTextSelection(context!.start + rect!.map.map.at(-1)! + 2); editor.commands.addRowAfter(); })}>追加一行</button>
+      <button onClick={() => act(() => { editor.commands.setTextSelection(context!.start + rect!.map.map.at(-1)! + 2); editor.commands.addColumnAfter(); })}>追加一列</button>
+      <button onClick={() => act(() => editor.commands.toggleHeaderRow())}>表头开关</button>
+      <button onClick={() => act(() => setWidths(editor, null))}>恢复自适应</button><button onClick={() => act(() => setWidths(editor, tableWidths(editor)))}>按列宽显示</button>
+      <button onClick={() => act(() => { const widths = tableWidths(editor); setWidths(editor, widths.map(() => Math.max(64, Math.round(widths.reduce((a, b) => a + b, 0) / widths.length)))); })}>平均分配整表列宽</button>
+      <button onClick={() => act(() => beforeTable(editor))}>在表格上方继续输入</button><button onClick={() => act(() => belowTable(editor))}>在表格下方继续输入</button><hr /><button className="danger" onClick={() => remove("table")}>删除表格</button>
+    </>}
+    {panel === "image" && <>
+      {(["left", "center", "right"] as const).map((value, i) => <button key={value} aria-pressed={editor.getAttributes("image").imageAlign === value} onClick={() => act(() => editor.commands.updateAttributes("image", { imageAlign: value }), true)}>图片{["左对齐", "居中", "右对齐"][i]}</button>)}
+      <button onClick={() => act(() => editor.commands.updateAttributes("image", { imageAlign: null }), true)}>恢复默认对齐</button>
+      {context && <button aria-haspopup="true" onClick={() => go("more")}>表格操作 ›</button>}
+      <hr /><button className="danger" onClick={() => act(() => editor.commands.deleteSelection())}>移除图片</button>
+    </>}
+  </Popup>;
 }

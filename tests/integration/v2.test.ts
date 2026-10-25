@@ -42,6 +42,9 @@ describe("v2 content and full-result ordering", () => {
       expect(ids).toEqual(expected.map(n => n.id)); expect(new Set(ids).size).toBe(150);
     }
     await expect(listNotes(env.DB, { sortBy: "title; DROP TABLE uranus_notes" })).rejects.toMatchObject({ code: "INVALID_SORT" });
+    const largePage = await listNotes(env.DB, { folderId: 42, q: "needle", pageSize: 100 });
+    expect(largePage.items).toHaveLength(100);
+    expect(largePage.items.every(item => item.searchMatch?.text === "needle")).toBe(true);
     await expect(listNotes(env.DB, { page: NaN })).rejects.toMatchObject({ code: "INVALID_PAGE" });
   });
 });

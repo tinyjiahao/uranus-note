@@ -3,6 +3,7 @@ import { normalizeSearch, validateAndDeriveContent, validateSearchQuery } from "
 import { ApiError } from "../lib/http";
 import { randomSafeInteger, requestHash } from "../lib/crypto";
 import { existingOperation, validateOperationId } from "./operations";
+import { searchMatch } from "../../shared/searchMatch";
 
 type NoteRow = {
   id: number; folder_id: number; title: string; snippet: string; content_json: string;
@@ -57,7 +58,27 @@ export async function listNotes(db: D1Database, options: ListOptions): Promise<P
   bindings.push(pageSize + 1, (page - 1) * pageSize);
   const result = await db.prepare(sql).bind(...bindings).all<NoteRow>();
   const rows = result.results;
-  return { items: rows.slice(0, pageSize).map(listItem), page, pageSize, hasMore: rows.length > pageSize, totalCount: count?.count ?? 0 };
+  const items = rows.slice(0, pageSize).map(listItem);
+  if (options.q?.trim() && items.length) {
+    const query = validateSearchQuery(options.q);
+    // Only the returned page is inspected. Never transfer full normalized body to
+    // JS or to the client; SQLite's offsets are already code-point based.
+    for (let offset = 0; offset < items.length; offset += 50) {
+      const batch = items.slice(offset, offset + 50);
+      const snippets = await db.prepare(`
+      WITH matches AS (
+        SELECT note_id, CASE WHEN instr(normalized_title, ?) > 0 THEN 'title' ELSE 'body' END AS source,
+          CASE WHEN instr(normalized_title, ?) > 0 THEN normalized_title ELSE normalized_text END AS text
+        FROM uranus_note_search WHERE note_id IN (${batch.map(() => "?").join(",")})
+      ), positioned AS (SELECT *, max(1, instr(text, ?) - 50) AS start FROM matches)
+      SELECT note_id, source, substr(text, start, 200) AS fragment, start > 1 AS before,
+        length(text) >= start + 200 AS after FROM positioned
+    `).bind(query, query, ...batch.map(item => item.id), query).all<{ note_id: number; source: "title" | "body"; fragment: string; before: number; after: number }>();
+      const byId = new Map(snippets.results.map(row => [row.note_id, row]));
+      for (const item of batch) { const hit = byId.get(item.id); if (hit) item.searchMatch = searchMatch(hit.source, hit.fragment, query, !!hit.before, !!hit.after); }
+    }
+  }
+  return { items, page, pageSize, hasMore: rows.length > pageSize, totalCount: count?.count ?? 0 };
 }
 
 type CreateInput = { operation_id: string; folder_id?: number | undefined; content_schema_version: 1 | 2 | 3 | 4; content?: Record<string, unknown> | undefined };
