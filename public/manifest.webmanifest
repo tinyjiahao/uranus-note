@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "Uranus Notes",
+  "short_name": "Uranus",
+  "description": "联网记录、整理与编辑你的笔记。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#f5c842",
+  "background_color": "#f7f6f2",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Popup, closePopups } from "./Popup";
 import { useQuery } from "@tanstack/react-query";
 import { useUiStore, parseEditorFontSize } from "../state/ui";
+import { InstallApp } from "./InstallApp";
 
 export function SortControls() {
   const { sort, setSort } = useUiStore();
@@ -42,6 +43,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
     </section>
     <details><summary>安全</summary><p>网页登录令牌由部署端管理。网页直接换令牌尚未交付。</p><p>部署者可通过 Cloudflare Workers → 设置 → 变量和机密更换 API_TOKEN。它是本应用登录凭据，不是 Cloudflare 管理令牌。</p><p>SESSION_SECRET 用于签名会话。任一密钥更换生效后，所有设备需要重新登录。</p></details>
     <details><summary>关于与部署</summary>{status.data ? <><p>Uranus {status.data.version}</p><p>配置：{status.data.configured ? "齐全" : "不完整"}</p><p>D1：{status.data.database}；附件：{status.data.attachments}</p></> : <p>{status.error ? "无法读取服务状态" : "正在检查服务状态…"}</p>}
+      <InstallApp />
       <p>D1 / R2 bindings、APP_ORIGIN 和会话时长由部署配置管理。</p><a href="/deployment-guide.html" target="_blank" rel="noopener noreferrer">项目与部署指引</a>
       <p>剪切、复制、粘贴使用系统菜单或键盘快捷键。对象菜单可用 Shift+F10 打开，方向键导航，Escape 关闭。</p>
     </details>
