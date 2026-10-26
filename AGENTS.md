@@ -70,7 +70,7 @@
 
 ## 鉴权与安全
 
-- v6 本地已切换邮箱密码登录，不再依赖应用 API_TOKEN；SESSION_SECRET 为至少 32 字节安全随机会话签名密钥。生产迁移仍须按 plan_v6 门槛另行验证。
+- v6 本地与生产已切换邮箱密码登录，不再依赖应用 API_TOKEN；SESSION_SECRET 为至少 32 字节安全随机会话签名密钥。生产部署记录及未完成的独立环境/人工验收见 implementation-v6 §10；其他实例升级仍须冻结、备份、迁移、初始化和验证，不能直接覆盖旧鉴权。
 - 生产使用 Worker Secrets，本地用未提交的 `.dev.vars`；所有 VITE_* 都视为公开。
 - 浏览器用 HttpOnly 会话，生产 Cookie 设置 Secure、SameSite=Strict、Path=/，不设 Domain。
 - Cookie Max-Age/Expires 与会话期限一致；登录使用 LOGIN_RATE_LIMITER binding，默认每 IP 每 60 秒 10 次，不宣称严格全局计数。

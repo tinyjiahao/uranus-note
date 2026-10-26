@@ -70,8 +70,10 @@ node --use-env-proxy scripts/remote-operations.mjs backup backups/production-bef
 node --use-env-proxy scripts/remote-operations.mjs migrate backups/production-before-v6
 node --use-env-proxy scripts/remote-operations.mjs initialize admin@example.com backups/production-before-v6
 npm run deploy
-# 验证邮箱登录、归属和旧令牌拒绝后，使用备份输出的维护 id：
+node --use-env-proxy scripts/remote-operations.mjs audit backups/production-before-v6
+# 确认新入口健康、归属与密码哈希正确后解除冻结（冻结期间禁止签发登录会话）：
 node --use-env-proxy scripts/remote-operations.mjs resume <maintenance-id>
+node --use-env-proxy scripts/verify-production-v6.mjs backups/production-before-v6 admin@example.com
 ```
 
 工具使用 Cloudflare 登录凭据创建临时远程预览，通过真实 D1/R2 bindings 操作；另加每次随机的运维密钥，结束即关闭预览，不部署永久运维路由。**不得 deploy `scripts/operations-preview.worker.ts` 或临时配置**。需要代理的环境须显式设置 HTTPS_PROXY/HTTP_PROXY，NO_PROXY 包含 localhost/127.0.0.1，不修改用户系统配置。任何失败保留冻结状态及可重试进度；先检查状态，不能为绕过错误直接解除冻结。

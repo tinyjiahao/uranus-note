@@ -8,6 +8,8 @@ import { unstable_DevEnv, unstable_readConfig } from "wrangler";
 import { backup, verify, migrate } from "./local-operations.mjs";
 import { initializeDefaultAccount } from "../worker/services/initializeAccount.ts";
 import { passwordSchema } from "../shared/account.ts";
+import { verifyPassword } from "../worker/lib/password.ts";
+import assert from "node:assert/strict";
 
 export async function remoteProxy() {
   const config = unstable_readConfig({ config: "wrangler.jsonc" });
@@ -43,9 +45,9 @@ export async function remoteProxy() {
 }
 
 export async function run(command, args = []) {
-  if (!["status", "backup", "migrate", "initialize", "resume"].includes(command)) throw new Error("INVALID_COMMAND");
+  if (!["status", "backup", "migrate", "initialize", "resume", "audit"].includes(command)) throw new Error("INVALID_COMMAND");
   let vars;
-  if (command === "initialize") {
+  if (command === "initialize" || command === "audit") {
     vars = parseEnv(await readFile(".env.production.local", "utf8"));
     passwordSchema.parse(vars.ADMIN_INITIAL_PASSWORD);
   }
@@ -63,6 +65,22 @@ export async function run(command, args = []) {
       const result = await backup(db, bucket, resolve(args[0]));
       await verify(resolve(args[0]));
       console.log(JSON.stringify({ verified: true, maintenanceId: result.maintenanceId, counts: result.counts, objects: result.files.filter(f => f.objectKey).length }));
+    }
+    if (command === "audit") {
+      const { files, manifest } = await verify(resolve(args[0]));
+      assert.equal((await stateOf()).mode, "frozen");
+      const marker = await db.prepare("SELECT * FROM uranus_account_state WHERE id=1").first();
+      assert.equal(marker.ownership_ready, 1);
+      const account = await db.prepare("SELECT * FROM uranus_users WHERE id=?").bind(marker.default_user_id).first();
+      assert.equal(await verifyPassword(vars.ADMIN_INITIAL_PASSWORD, account), true);
+      for (const table of Object.keys(manifest.counts).filter(t => !["uranus_users", "uranus_account_state"].includes(t))) {
+        const before = files.filter(f => f.table === table).flatMap(f => JSON.parse(f.bytes));
+        const after = (await db.prepare("SELECT * FROM " + table + " ORDER BY rowid").all()).results;
+        assert.equal(after.length, before.length);
+        before.forEach((row, i) => { for (const key of Object.keys(row)) assert.deepEqual(after[i][key], row[key]); });
+        if (["uranus_folders", "uranus_notes", "uranus_operations", "uranus_maintenance_jobs"].includes(table)) assert.equal(after.every(row => row.user_id === marker.default_user_id), true);
+      }
+      console.log(JSON.stringify({ ownershipVerified: true, initialPasswordVerified: true, originalRowsUnchanged: true }));
     }
     if (command === "migrate" || command === "initialize") {
       const source = command === "migrate" ? args[0] : args[1];
