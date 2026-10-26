@@ -10,10 +10,10 @@ const blockNodes = new Set([
   "doc", "paragraph", "heading", "bulletList", "orderedList", "listItem", "taskList", "taskItem",
   "blockquote", "codeBlock", "horizontalRule", "hardBreak", "table", "tableRow", "tableHeader", "tableCell", "image", "text",
 ]);
-const markNodes = new Set(["bold", "italic", "underline", "strike", "code", "highlight", "link"]);
+const markNodes = new Set(["bold", "italic", "underline", "strike", "code", "highlight", "link", "small"]);
 
 export const contentEnvelopeSchema = z.object({
-  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
   content: z.record(z.string(), z.unknown()),
 });
 
@@ -48,7 +48,7 @@ function safeLink(value: unknown): boolean {
   }
 }
 
-export function validateAndDeriveContent(input: unknown, schemaVersion = 4): DerivedContent {
+export function validateAndDeriveContent(input: unknown, schemaVersion = 5): DerivedContent {
   const serialized = JSON.stringify(input);
   if (bytes(serialized) > MAX_CONTENT_BYTES) {
     throw new ContentValidationError("CONTENT_TOO_LARGE", "正文超过 1,500,000 字节限制", 413);
@@ -60,7 +60,7 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 4): Der
   const textParts: string[] = [];
   const paragraphs: string[] = [];
   const attachments = new Set<string>();
-  const walk = (node: ContentNode, depth: number): string => {
+  const walk = (node: ContentNode, depth: number, ancestors: string[] = []): string => {
     count++;
     if (count > MAX_NODES || depth > MAX_DEPTH) {
       throw new ContentValidationError("CONTENT_COMPLEXITY_EXCEEDED", "正文结构过于复杂");
@@ -83,11 +83,24 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 4): Der
       if (!rows.length || !columns || rows.some(row => row.type !== "tableRow" || row.content?.length !== columns)) throw new ContentValidationError("INVALID_TABLE", "表格必须包含等长的行");
     }
     if (node.type === "tableCell" || node.type === "tableHeader") {
+      const richBlocks = new Set(["bulletList", "orderedList", "taskList", "blockquote", "codeBlock"]);
       for (const child of node.content ?? []) {
         if (child.type === "image") {
           if (schemaVersion < 4) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "表格图片需要新版客户端，请刷新页面");
-        } else if (child.type !== "paragraph" || child.content?.some(inline => !["text", "hardBreak"].includes(inline.type ?? ""))) {
-          throw new ContentValidationError("INVALID_TABLE", "单元格仅支持段落、内联文字和图片");
+        } else if (child.type === "paragraph") {
+          if (child.content?.some(inline => !["text", "hardBreak"].includes(inline.type ?? ""))) throw new ContentValidationError("INVALID_TABLE", "单元格段落包含不支持的节点");
+        } else if (richBlocks.has(child.type ?? "")) {
+          if (schemaVersion < 5) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "单元格富文本需要新版客户端，请刷新页面");
+          let invalid = false;
+          const allowed = new Set(["paragraph", "hardBreak", "text", "bulletList", "orderedList", "taskList", "listItem", "taskItem", "blockquote", "codeBlock"]);
+          const check = (descendant: ContentNode) => {
+            if (!allowed.has(descendant.type ?? "")) invalid = true;
+            descendant.content?.forEach(check);
+          };
+          child.content?.forEach(check);
+          if (invalid) throw new ContentValidationError("INVALID_TABLE", "单元格富文本不能包含嵌套表格、标题、分隔线或列表内图片");
+        } else {
+          throw new ContentValidationError("INVALID_TABLE", "单元格包含不支持的块类型");
         }
       }
       const attrs = node.attrs ?? {};
@@ -101,6 +114,10 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 4): Der
     if (node.marks) {
       for (const mark of node.marks) {
         if (!markNodes.has(mark.type)) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", `不支持的标记：${mark.type}`);
+        if (mark.type === "small") {
+          if (schemaVersion < 5) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "小号文本需要新版客户端，请刷新页面");
+          if (ancestors.includes("heading") || ancestors.includes("codeBlock") || node.marks.some(candidate => candidate.type === "code")) throw new ContentValidationError("INVALID_SMALL_TEXT", "标题和代码中不支持小号文本");
+        }
         if (mark.type === "link" && !safeLink(mark.attrs?.href)) {
           throw new ContentValidationError("INVALID_LINK", "链接仅允许 http、https 或 mailto");
         }
@@ -124,7 +141,7 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 4): Der
       textParts.push(node.text);
       return node.text;
     }
-    const own = (node.content ?? []).map((child) => walk(child, depth + 1)).join("");
+    const own = (node.content ?? []).map((child) => walk(child, depth + 1, [...ancestors, node.type ?? ""])).join("");
     if (["paragraph", "heading", "blockquote", "codeBlock", "listItem", "taskItem", "tableCell", "tableHeader"].includes(node.type)) {
       paragraphs.push(own.trim());
       textParts.push("\n");

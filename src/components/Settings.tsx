@@ -18,6 +18,8 @@ export function SortControls() {
 export function Settings({ onClose }: { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const ui = useUiStore();
+  const [syncInput, setSyncInput] = useState(String(ui.syncIntervalSeconds));
+  useEffect(() => setSyncInput(String(ui.syncIntervalSeconds)), [ui.syncIntervalSeconds]);
   const status = useQuery({ queryKey: ["deployment-status"], queryFn: async () => {
     const response = await fetch("/api/settings/status");
     if (!response.ok) throw new Error("无法读取服务状态");
@@ -39,7 +41,13 @@ export function Settings({ onClose }: { onClose: () => void }) {
       <label>主题 <select aria-label="主题" value={ui.theme} onChange={e => ui.setTheme(e.target.value as typeof ui.theme)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <label>布局 <select aria-label="布局" value={ui.layout} onChange={e => ui.setLayout(e.target.value as typeof ui.layout)}><option value="three">三栏</option><option value="two">双栏</option><option value="focus">专注</option></select></label>
       <SortControls />
-      <button onClick={() => { if (confirm("恢复布局、主题、宽度、字号和排序的默认偏好？笔记和草稿将保留。")) ui.reset(); }}>恢复默认偏好</button>
+      <label>远程同步间隔（秒）<input aria-label="远程同步间隔（秒）" type="number" min="5" max="300" step="1" value={syncInput} onChange={e => {
+        setSyncInput(e.target.value);
+        const value = Number(e.target.value);
+        if (Number.isInteger(value) && value >= 5 && value <= 300) ui.setSyncIntervalSeconds(value);
+      }} onBlur={() => setSyncInput(String(ui.syncIntervalSeconds))} style={{ width: 90 }} /></label>
+      <p>默认 30 秒，可设为 5–300 秒。停止输入 0.8 秒后存入本机草稿，持续输入时最多每 3 秒存一次；有改动时按此间隔同步。切换笔记或按 ⌘/Ctrl+S 立即同步。未同步内容仅保存在此浏览器。</p>
+      <button onClick={() => { if (confirm("恢复布局、主题、宽度、字号、排序和同步间隔的默认偏好？笔记和草稿将保留。")) ui.reset(); }}>恢复默认偏好</button>
     </section>
     <details><summary>安全</summary><p>网页登录令牌由部署端管理。网页直接换令牌尚未交付。</p><p>部署者可通过 Cloudflare Workers → 设置 → 变量和机密更换 API_TOKEN。它是本应用登录凭据，不是 Cloudflare 管理令牌。</p><p>SESSION_SECRET 用于签名会话。任一密钥更换生效后，所有设备需要重新登录。</p></details>
     <details><summary>关于与部署</summary>{status.data ? <><p>Uranus {status.data.version}</p><p>配置：{status.data.configured ? "齐全" : "不完整"}</p><p>D1：{status.data.database}；附件：{status.data.attachments}</p></> : <p>{status.error ? "无法读取服务状态" : "正在检查服务状态…"}</p>}

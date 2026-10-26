@@ -10,5 +10,5 @@ importRoutes.post("/markdown", async (c) => {
   const parsed = z.object({ operation_id: z.string().uuid(), folder_id: z.number().int().positive().optional(), markdown: z.string() }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Markdown 导入请求无效");
   const content = markdownToContent(parsed.data.markdown) as Record<string, unknown>;
-  return c.json(await createNote(c.env.DB, { operation_id: parsed.data.operation_id, folder_id: parsed.data.folder_id, content_schema_version: 2, content }), 201);
+  return c.json(await createNote(c.env.DB, { operation_id: parsed.data.operation_id, folder_id: parsed.data.folder_id, content_schema_version: 5, content }), 201);
 });

@@ -5,19 +5,45 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 type SearchState = { query: string; active: number; ranges: Array<{ from: number; to: number }>; decorations: DecorationSet };
 export const searchHighlightKey = new PluginKey<SearchState>("uranus-search-highlight");
 
+function fold(value: string) {
+  let text = "", original = 0;
+  const starts: number[] = [], ends: number[] = [];
+  for (const point of value) {
+    const lowered = point.toLowerCase();
+    text += lowered;
+    for (let index = 0; index < lowered.length; index++) { starts.push(original); ends.push(original + point.length); }
+    original += point.length;
+  }
+  return { text, starts, ends };
+}
+
 function build(doc: Parameters<typeof DecorationSet.create>[0], query: string, active: number): SearchState {
   const ranges: Array<{ from: number; to: number }> = [];
-  const needle = query.toLocaleLowerCase();
+  const needle = fold(query).text;
   if (needle) doc.descendants((node, position) => {
-    if (!node.isText || !node.text) return;
-    const haystack = node.text.toLocaleLowerCase();
+    if (!node.isTextblock) return;
+    let value = "";
+    const pieces: Array<{ offset: number; from: number; length: number }> = [];
+    node.descendants((child, childPosition) => {
+      if (!child.isText || !child.text) return;
+      pieces.push({ offset: value.length, from: position + 1 + childPosition, length: child.text.length });
+      value += child.text;
+      return false;
+    });
+    const folded = fold(value), haystack = folded.text;
     let offset = 0;
     while ((offset = haystack.indexOf(needle, offset)) >= 0) {
-      ranges.push({ from: position + offset, to: position + offset + needle.length });
+      const originalStart = folded.starts[offset] ?? offset;
+      const originalEnd = folded.ends[offset + needle.length - 1] ?? originalStart;
+      const first = pieces.find(piece => originalStart >= piece.offset && originalStart < piece.offset + piece.length);
+      const endOffset = originalEnd;
+      const last = [...pieces].reverse().find(piece => endOffset > piece.offset && endOffset <= piece.offset + piece.length);
+      if (first && last) ranges.push({ from: first.from + originalStart - first.offset, to: last.from + endOffset - last.offset });
       offset += Math.max(needle.length, 1);
     }
+    return false;
   });
-  const normalizedActive = ranges.length ? ((active % ranges.length) + ranges.length) % ranges.length : 0;
+  const normalizedActive = ranges.length && active >= 0 ? ((active % ranges.length) + ranges.length) % ranges.length : -1;
   const decorations = DecorationSet.create(doc, ranges.map((range, index) => Decoration.inline(range.from, range.to, { class: index === normalizedActive ? "search-hit search-hit-current" : "search-hit" })));
   return { query, active: normalizedActive, ranges, decorations };
 }
@@ -44,6 +70,12 @@ export function updateEditorSearch(editor: Editor, query: string, active: number
   editor.view.dispatch(editor.state.tr.setMeta(searchHighlightKey, { query, active }));
   const state = searchHighlightKey.getState(editor.state);
   const range = state?.ranges[state.active];
-  if (range) editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, range.from, range.to)).scrollIntoView());
+  if (range) {
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, range.from, range.to)).scrollIntoView());
+    // At a text/decorated boundary domAtPos can return the whole code block.
+    // Scroll the actual match, not its potentially very tall parent.
+    const element = editor.view.dom.querySelector(".search-hit-current");
+    element?.scrollIntoView({ block: "center", inline: "center" });
+  }
   return state?.ranges.length ?? 0;
 }

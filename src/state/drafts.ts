@@ -1,6 +1,6 @@
 import type { ContentNode } from "../../shared/dto";
 
-export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3 | 4; editSequence: number; updatedAt: number; content: ContentNode };
+export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3 | 4 | 5; editSequence: number; updatedAt: number; content: ContentNode };
 const DB_NAME = "uranus-drafts";
 const STORE = "drafts";
 
@@ -22,7 +22,7 @@ export async function putDraft(draft: Draft): Promise<boolean> {
     const existing = store.get(draft.noteId);
     existing.onsuccess = () => {
       const current = existing.result as Draft | undefined;
-      if (!current || current.editSequence <= draft.editSequence) { store.put(draft); stored = true; }
+      if (!current || current.editSequence < draft.editSequence || (current.editSequence === draft.editSequence && current.baseRevision <= draft.baseRevision)) { store.put(draft); stored = true; }
     };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);

@@ -62,8 +62,9 @@ function cellAttributes() {
       renderHTML: (attrs: Record<string, unknown>) => attrs.verticalAlign ? { style: `vertical-align: ${attrs.verticalAlign}` } : {} },
   };
 }
-const Cell = TableCell.extend({ content: "(paragraph | image)+", addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
-const Header = TableHeader.extend({ content: "(paragraph | image)+", addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
+const cellContent = "(paragraph | image | bulletList | orderedList | taskList | blockquote | codeBlock)+";
+const Cell = TableCell.extend({ content: cellContent, addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
+const Header = TableHeader.extend({ content: cellContent, addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
 
 class UranusTableView extends TableView {
   private cancelDrag: (() => void) | undefined;
@@ -71,6 +72,7 @@ class UranusTableView extends TableView {
   private appendColumn: HTMLButtonElement;
   private stage: HTMLDivElement;
   private handles: HTMLDivElement;
+  private rowNumbers: HTMLDivElement;
   private observer: ResizeObserver;
   private frame = 0;
   constructor(node: PMNode, private editor: Editor, private getPos: () => number | undefined, view: EditorView) {
@@ -79,6 +81,8 @@ class UranusTableView extends TableView {
     this.dom.appendChild(this.stage); this.stage.appendChild(this.table);
     this.handles = document.createElement("div"); this.handles.className = "table-handles"; this.handles.contentEditable = "false";
     this.stage.appendChild(this.handles);
+    this.rowNumbers = document.createElement("div"); this.rowNumbers.className = "table-row-numbers"; this.rowNumbers.contentEditable = "false";
+    this.stage.appendChild(this.rowNumbers);
     const add = (label: string, kind: "row" | "column") => {
       const button = document.createElement("button"); button.type = "button"; button.contentEditable = "false";
       button.textContent = "+"; button.title = label; button.setAttribute("aria-label", label); button.className = `table-add-${kind}`;
@@ -97,6 +101,7 @@ class UranusTableView extends TableView {
     this.table.addEventListener("pointerdown", this.startDrag);
     this.table.addEventListener("contextmenu", this.contextMenu);
     this.dom.addEventListener("scroll", this.overflow);
+    window.addEventListener("uranus-table-row-numbers", this.layoutHandles);
     editor.on("selectionUpdate", this.active);
     this.observer = new ResizeObserver(() => this.layoutHandles());
     this.observer.observe(this.table);
@@ -114,6 +119,14 @@ class UranusTableView extends TableView {
   private layoutHandles = () => {
     if (!this.editor.isEditable) { this.handles.replaceChildren(); delete this.handles.dataset.shape; return; }
     const rows = Array.from(this.table.rows); const cells = Array.from(rows[0]?.cells ?? []);
+    let showNumbers = false;
+    try { showNumbers = localStorage.getItem("uranus.table.rowNumbers") === "1"; } catch { /* Preference storage is optional. */ }
+    this.dom.classList.toggle("show-row-numbers", showNumbers);
+    this.rowNumbers.replaceChildren(...rows.map((row, index) => {
+      const number = document.createElement("span"); number.textContent = String(index + 1);
+      number.style.top = `${row.offsetTop}px`; number.style.height = `${row.offsetHeight}px`;
+      return number;
+    }));
     const shape = `${rows.length}:${cells.length}`;
     if (this.handles.dataset.shape !== shape) {
       this.handles.dataset.shape = shape; this.handles.replaceChildren();
@@ -238,7 +251,7 @@ class UranusTableView extends TableView {
     return true;
   }
   stopEvent(event: Event) { return (event.target as HTMLElement).closest("button") !== null; }
-  destroy() { cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); }
+  destroy() { cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
 }
 const UranusTable = Table.extend({
   addAttributes() { return { widthMode: { default: "fluid", parseHTML: (el: HTMLElement) => el.dataset.widthMode === "fixed" ? "fixed" : "fluid", renderHTML: (attrs: Record<string, unknown>) => ({ "data-width-mode": attrs.widthMode }) } }; },

@@ -1,6 +1,6 @@
 # 部署指南
 
-v2 升级前阅读 [schema 2 升级与验证说明](implementation-v2.md)。必须先备份再迁移；已有 schema 2 内容时不能直接回滚到旧 Worker。本地实现不代表已执行生产发布。
+升级前阅读 [schema 2—4 升级与验证说明](implementation-v2.md) 和 [schema 5 实施记录](implementation-v5.md)。必须先备份再迁移；已有新 schema 内容时不能直接回滚到旧 Worker。本地实现不代表已执行生产发布。
 
 ## 1. 创建资源
 
@@ -57,4 +57,4 @@ Cloudflare Vite Plugin 生成 `dist/worker/wrangler.json`，部署脚本使用�
 
 ## 5. 升级
 
-升级前完成 D1+R2 备份，检查依赖与 Cloudflare release notes。顺序固定为：新 migrations → 应用部署 → 冒烟。已发布 migration 不得改写；Worker 回滚不等于 schema 回滚。
+升级前完成 D1+R2 备份，检查依赖与 Cloudflare release notes。顺序固定为：新 migrations → 应用部署 → 冒烟。v5 必须先应用 `0006_content_v5.sql`，再开放单元格富文本和小号文本入口。已发布 migration 不得改写；Worker 回滚不等于 schema 回滚。

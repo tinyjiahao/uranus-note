@@ -52,6 +52,30 @@ test("width, settings, selection, responsive layout and sorting preserve the edi
   await expect(page.getByRole("button", { name: "笔记排序" })).toContainText("标题");
 });
 
+test("settings selects keep their complete labels visible at narrow widths", async ({ page }) => {
+  await page.setViewportSize({ width: 420, height: 800 });
+  await openNew(page);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const drawer = page.locator(".settings-drawer");
+  const selects = drawer.locator("select");
+  await expect(selects).toHaveCount(4);
+  for (const select of await selects.all()) {
+    expect((await select.boundingBox())!.width).toBeGreaterThanOrEqual(184);
+    expect(await select.evaluate(element => {
+      const style = getComputedStyle(element);
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d")!;
+      context.font = style.font;
+      const textWidth = context.measureText(element.querySelector("option:checked")?.textContent ?? "").width;
+      return textWidth <= element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    })).toBe(true);
+  }
+
+  await page.setViewportSize({ width: 375, height: 800 });
+  await expect(drawer.locator("section > label").first()).toHaveCSS("flex-direction", "column");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+});
+
 test("keyboard table insertion, last-cell Tab and ten-column narrow scrolling", async ({ page }) => {
   await openNew(page); const editor = page.locator(".prose-editor");
   const tableButton = page.getByRole("button", { name: "表格", exact: true });
@@ -160,6 +184,9 @@ test("table edge handles insert in place and row menus preserve selection", asyn
   await editor.locator(".tableWrapper").hover();
   await page.getByRole("button", { name: "在第 3 行位置插入", exact: true }).focus();
   await page.screenshot({ path: "test-results/table-edge-dark.png" });
+  const firstCell = (await editor.locator("tr").first().locator("th,td").first().boundingBox())!;
+  const firstRowHandle = (await page.getByRole("button", { name: "第 1 行菜单", exact: true }).boundingBox())!;
+  expect(firstRowHandle.x + firstRowHandle.width).toBeLessThanOrEqual(firstCell.x);
   await page.setViewportSize({ width: 375, height: 800 });
   await page.getByRole("button", { name: "表格菜单", exact: true }).click();
   const menu = (await page.getByRole("dialog", { name: "表格操作" }).boundingBox())!;

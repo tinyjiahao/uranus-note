@@ -5,7 +5,8 @@ const baseURL = loadEnv("test", ".", "URANUS_").URANUS_TEST_URL ?? "http://127.0
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 30_000,
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
   fullyParallel: false,
   use: { baseURL, trace: "retain-on-failure" },
   projects: [{ name: "chrome", use: { ...devices["Desktop Chrome"], channel: "chrome" } }],

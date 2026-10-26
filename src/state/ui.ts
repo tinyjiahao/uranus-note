@@ -3,6 +3,10 @@ import { create } from "zustand";
 export type LayoutMode = "three" | "two" | "focus";
 export type ThemeMode = "system" | "light" | "dark";
 export type WidthMode = "fluid" | "reading";
+export function parseSyncInterval(value: string | null): number {
+  const seconds = Number(value);
+  return Number.isInteger(seconds) && seconds >= 5 && seconds <= 300 ? seconds : 30;
+}
 export const editorFontSizes = [14, 16, 18, 20] as const;
 export type EditorFontSize = typeof editorFontSizes[number];
 export function parseEditorFontSize(value: string | null): EditorFontSize {
@@ -28,6 +32,7 @@ const choice = <T extends string>(key: string, values: readonly T[], fallback: T
   const value = readPreference(key); return values.includes(value as T) ? value as T : fallback;
 };
 type UiState = {
+  syncIntervalSeconds: number; setSyncIntervalSeconds: (value: number) => void;
   layout: LayoutMode; theme: ThemeMode; widthMode: WidthMode; editorFontSize: EditorFontSize; sort: Sort; storageWarning: boolean;
   setEditorFontSize: (value: EditorFontSize) => void;
   setLayout: (value: LayoutMode) => void; setTheme: (value: ThemeMode) => void;
@@ -39,6 +44,8 @@ const widthMode = choice("uranus.editor.widthMode", ["fluid", "reading"], "fluid
 const sort = parseSort(readPreference("uranus.notes.sort"));
 const editorFontSize = parseEditorFontSize(readPreference("uranus.editor.fontSize"));
 export const useUiStore = create<UiState>((set, get) => ({
+  syncIntervalSeconds: parseSyncInterval(readPreference("uranus.syncIntervalSeconds")),
+  setSyncIntervalSeconds: value => { const seconds = parseSyncInterval(String(value)); writePreference("uranus.syncIntervalSeconds", String(seconds)); set({ syncIntervalSeconds: seconds }); },
   layout, theme, widthMode, editorFontSize, sort, storageWarning: storageError,
   setEditorFontSize: (value) => { const editorFontSize = parseEditorFontSize(String(value)); writePreference("uranus.editor.fontSize", String(editorFontSize)); set({ editorFontSize }); },
   setLayout: (layout) => { writePreference("uranus.layout", layout); set({ layout }); },
@@ -49,7 +56,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     document.documentElement.dataset.theme = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
     set({ theme });
   },
-  reset: () => { get().setLayout("three"); get().setTheme("system"); get().setWidthMode("fluid"); get().setEditorFontSize(14); get().setSort(defaultSort); },
+  reset: () => { get().setLayout("three"); get().setTheme("system"); get().setWidthMode("fluid"); get().setEditorFontSize(14); get().setSort(defaultSort); get().setSyncIntervalSeconds(30); },
 }));
 export function noteTime(value: number, now = new Date()) {
   const date = new Date(value); const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);

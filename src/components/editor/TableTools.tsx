@@ -58,7 +58,7 @@ export function TablePicker({ editor, close, anchor, range }: { editor: Editor; 
 }
 
 export type ObjectMenuEvent = { kind: string; anchor: PopupAnchor };
-export function TableTools({ editor, readOnly }: { editor: Editor; readOnly: boolean }) {
+export function TableTools({ editor, readOnly, showRowNumbers, onShowRowNumbers }: { editor: Editor; readOnly: boolean; showRowNumbers: boolean; onShowRowNumbers: (value: boolean) => void }) {
   const [, refresh] = useState(0), [target, setTarget] = useState<ObjectMenuEvent | null>(null), [panel, setPanel] = useState(""), [width, setWidth] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const executing = useRef(false);
@@ -129,6 +129,7 @@ export function TableTools({ editor, readOnly }: { editor: Editor; readOnly: boo
       <p>有独立对齐的内容保持原设置。</p>
     </>}
     {panel === "more" && <>
+      <button aria-pressed={showRowNumbers} onClick={() => { onShowRowNumbers(!showRowNumbers); window.dispatchEvent(new Event("uranus-table-row-numbers")); }}>显示行号</button>
       <button onClick={() => act(() => { editor.commands.setTextSelection(context!.start + rect!.map.map.at(-1)! + 2); editor.commands.addRowAfter(); })}>追加一行</button>
       <button onClick={() => act(() => { editor.commands.setTextSelection(context!.start + rect!.map.map.at(-1)! + 2); editor.commands.addColumnAfter(); })}>追加一列</button>
       <button onClick={() => act(() => editor.commands.toggleHeaderRow())}>表头开关</button>

@@ -17,8 +17,9 @@ try {
       await image.decode();
       if (maskable) {
         ctx.fillStyle = "#f5c842"; ctx.fillRect(0, 0, size, size);
-        // Entire 56% square lies within the central 80%-diameter safe circle.
-        ctx.drawImage(image, size * .22, size * .22, size * .56, size * .56);
+        // Keep the note/pencil artwork (including strokes) in the central
+        // 80%-diameter safe circle; the yellow background may extend beyond it.
+        ctx.drawImage(image, size * .11, size * .11, size * .78, size * .78);
       } else ctx.drawImage(image, 0, 0, size, size);
       return canvas.toDataURL("image/png").split(",")[1];
     }, { svg, size, maskable });

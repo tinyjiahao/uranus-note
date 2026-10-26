@@ -11,7 +11,7 @@ const shaUrl = (value) => createHash("sha256").update(value).digest("base64url")
 const manifestBytes = await readFile(join(source, "manifest.json"));
 await readFile(join(source, "COMPLETE"));
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
-if (manifest.backupFormatVersion !== 1 || ![1, 2, 3, 4].includes(manifest.contentSchemaVersion)) throw new Error("备份格式或正文 schema 与当前版本不兼容");
+if (manifest.backupFormatVersion !== 1 || ![1, 2, 3, 4, 5].includes(manifest.contentSchemaVersion)) throw new Error("备份格式或正文 schema 与当前版本不兼容");
 for (const [relative, expected] of Object.entries(manifest.files)) {
   const bytes = await readFile(join(source, relative));
   if (bytes.length !== expected.bytes || shaHex(bytes) !== expected.sha256) throw new Error(`${relative} 校验失败`);

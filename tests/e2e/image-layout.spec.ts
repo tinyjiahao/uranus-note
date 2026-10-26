@@ -63,7 +63,7 @@ test("images align independently in body and table cells and persist in readonly
   await expect(cellImage).toHaveCSS("text-align", "center");
   await cellImage.locator("img").click();
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
-  for (const name of ["靠左对齐", "居中对齐", "靠右对齐"]) await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+  for (const name of ["靠左对齐", "居中对齐", "靠右对齐"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
   for (const handle of await editor.locator(".image-resize-handle").all()) await expect(handle).toBeHidden();
   await page.setViewportSize({ width: 768, height: 900 });
   expect(await cellImage.evaluate(el => el.querySelector("img")!.getBoundingClientRect().width <= el.closest("td")!.getBoundingClientRect().width)).toBe(true);

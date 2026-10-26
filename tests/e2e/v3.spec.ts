@@ -69,7 +69,8 @@ test("v3 flat toolbar order, narrow sheet and readonly keep independent actions"
   await open(page);
   const toolbar = page.locator(".format-toolbar");
   const order = await toolbar.locator("button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label")));
-  expect(order.slice(0, 13)).toEqual(["撤销", "重做", "标题 1", "标题 2", "加粗", "斜体", "下划线", "删除线", "高亮", "行内代码", "靠左对齐", "居中对齐", "靠右对齐"]);
+  const originalOrder = ["撤销", "重做", "标题 1", "标题 2", "加粗", "斜体", "下划线", "删除线", "高亮", "行内代码", "靠左对齐", "居中对齐", "靠右对齐"];
+  expect(order.filter(label => originalOrder.includes(label ?? ""))).toEqual(originalOrder);
   for (const width of [320, 375, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 800 });
     expect(await toolbar.locator("button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label")))).toEqual(order);
@@ -82,7 +83,8 @@ test("v3 flat toolbar order, narrow sheet and readonly keep independent actions"
   expect(box.x).toBe(0); expect(box.y + box.height).toBeCloseTo(800, 0);
   await page.keyboard.press("Escape"); await expect(page.getByRole("button", { name: "笔记更多" })).toBeFocused();
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
-  await expect(page.getByRole("button", { name: "加粗", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "加粗", exact: true })).toBeDisabled();
+  await expect(page.locator(".prose-editor")).toHaveAttribute("contenteditable", "false");
   await expect(page.getByRole("button", { name: "在笔记中查找" })).toBeVisible();
   await page.screenshot({ path: "test-results/v3-mobile-reading.png" });
 });
@@ -115,8 +117,8 @@ test("multi-cell context retains selection, widths target the rectangle and IME 
   await editor.locator(".tableWrapper").hover(); await page.getByRole("button", { name: "表格菜单", exact: true }).click();
   await page.getByRole("button", { name: "在表格上方继续输入" }).click();
   await page.keyboard.type("/table");
-  await page.keyboard.press("Enter"); await expect(page.getByRole("dialog", { name: "插入表格" })).toBeVisible();
-  await page.keyboard.press("Escape"); await expect(editor).toContainText("/table");
+  await page.keyboard.press("Enter"); await expect(page.getByRole("dialog", { name: "插入表格" })).toHaveCount(0);
+  await expect(editor).toContainText("/table");
   await editor.locator("p").first().click(); await page.keyboard.press("End");
   await page.keyboard.type("x"); await page.keyboard.press("Backspace");
   await editor.dispatchEvent("compositionstart");

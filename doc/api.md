@@ -27,7 +27,7 @@
 | POST | `/api/notes/empty-trash` | 创建清空任务 |
 | POST | `/api/import/markdown` | 导入 Markdown 并创建笔记 |
 
-列表查询支持 `folder_id`、`starred=1`、`deleted=1`、`q`、`sort_by`、`sort_dir`、`page`、`pageSize`。PATCH 携带 `expected_revision`、UUIDv7 `operation_id`、当前客户端的 `content_schema_version: 4` 和要修改的字段。服务端兼容读取 schema 1—4，旧客户端不得覆盖较新 schema。
+列表查询支持 `folder_id`、`starred=1`、`deleted=1`、`q`、`sort_by`、`sort_dir`、`page`、`pageSize`。PATCH 携带 `expected_revision`、UUIDv7 `operation_id`、当前客户端的 `content_schema_version: 5` 和要修改的字段。服务端兼容读取 schema 1—5，旧客户端不得覆盖较新 schema。
 
 ## 附件与版本
 
@@ -54,6 +54,13 @@
 - `GET /api/notes` 返回 `totalCount`；排序统一为置顶优先，标题排序空值末尾，同值 id 升序；分页参数必须为有效正整数，每页最多 100 条。
 - `GET /api/settings/status` 需会话鉴权，返回应用版本、配置完整性、D1 实际只读探测结果和 R2 已绑定但未探测的状态，不返回资源 ID 或 Secrets。
 - 网页换令牌 API 未开放，鉴权仍遵循 v1 的 Worker Secrets 方案。
+
+## v5 内容增量
+
+- schema 5 新增语义 `small` mark，以及表格单元格中的无序/有序/待办列表、引用和代码块；仍拒绝嵌套表格、合并单元格和任意 HTML。
+- `small` 不允许出现在标题、代码块或行内代码中。表格仍必须是矩形，每行单元格数量相同。
+- 跨笔记图片复制继续使用 `POST /api/attachments/:id/copy` 生成目标笔记专属附件；同笔记复制可复用原附件引用。
+- schema 5 对数据库约束的支持由追加迁移 `0006_content_v5.sql` 提供。部署 Worker 前先备份并执行迁移。
 
 ## v3 搜索片段（可选响应扩展）
 

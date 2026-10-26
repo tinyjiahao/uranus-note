@@ -1,5 +1,14 @@
 import { expect, it } from "vitest";
-import { defaultSort, noteTime, parseSort, parseEditorFontSize, useUiStore } from "../../src/state/ui";
+import { defaultSort, noteTime, parseSort, parseEditorFontSize, parseSyncInterval, useUiStore } from "../../src/state/ui";
+
+it("validates sync interval bounds and defaults", () => {
+  for (const value of [null, "", "0", "4", "301", "NaN", "10.5"]) expect(parseSyncInterval(value)).toBe(30);
+  for (const seconds of [5, 30, 60, 300]) expect(parseSyncInterval(String(seconds))).toBe(seconds);
+  useUiStore.getState().setSyncIntervalSeconds(60);
+  expect(useUiStore.getState().syncIntervalSeconds).toBe(60);
+  useUiStore.getState().setSyncIntervalSeconds(-1);
+  expect(useUiStore.getState().syncIntervalSeconds).toBe(30);
+});
 
 it("validates font-size preferences and updates even when storage is unavailable", () => {
   for (const value of [null, "", "NaN", "15", "100", "14px", "-1"]) expect(parseEditorFontSize(value)).toBe(14);

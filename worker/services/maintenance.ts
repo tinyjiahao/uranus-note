@@ -115,12 +115,26 @@ export async function discoverExpiredTrash(db: D1Database) {
 
 export async function processMaintenance(db: D1Database, bucket: R2Bucket) {
   const now = Date.now();
+  if (!(await db.prepare("SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal'").first())) return;
+  // Recover interrupted attachment deletes, including records left by older clients.
+  // A stable job id prevents repeated scans from resetting retry limits/backoff.
+  await db.prepare(`INSERT OR IGNORE INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at)
+    SELECT 'delete_attachment:' || a.id, 'delete_attachment:' || a.id, 'queued', 0, ?, ?, ?
+    FROM uranus_attachments a JOIN uranus_notes n ON n.id=a.note_id
+    WHERE a.status='deleting' AND a.updated_at<=? AND n.purge_pending=0
+      AND NOT EXISTS (SELECT 1 FROM uranus_attachment_refs WHERE attachment_id=a.id)
+      AND NOT EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id='delete_attachment:' || a.id)
+    ORDER BY a.updated_at, a.id LIMIT 20`).bind(now, now, now, now - 120_000).run();
+  await db.prepare(`UPDATE uranus_maintenance_jobs SET status=CASE WHEN attempt>=8 THEN 'failed' ELSE 'retry_wait' END,
+    lease_owner=NULL, lease_until=NULL, next_attempt_at=CASE WHEN attempt>=8 THEN NULL ELSE ? END, last_error_code='LEASE_EXPIRED', updated_at=?
+    WHERE kind LIKE 'delete_attachment:%' AND status='running' AND lease_until<=?`).bind(now, now, now).run();
   const jobs = await db.prepare("SELECT id, kind FROM uranus_maintenance_jobs WHERE status IN ('queued','retry_wait') AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY created_at LIMIT 5").bind(now).all<{ id: string; kind: string }>();
   for (const job of jobs.results) {
     const owner = randomId();
     if (!(await acquireJob(db, job.id, owner, Date.now()))) continue;
     try {
       if (job.kind === "empty_trash") await processEmptyTrash(db, job.id, owner);
+      else if (job.kind.startsWith("delete_attachment:")) await processAttachmentDelete(db, bucket, job.id, owner, job.kind.slice(18));
       else if (job.kind.startsWith("purge_note:")) await processPurgeNote(db, bucket, job.id, owner, Number(job.kind.slice(11)));
       else await retryJob(db, job.id, owner, "UNKNOWN_JOB_KIND");
     } catch {
@@ -133,5 +147,34 @@ export async function processMaintenance(db: D1Database, bucket: R2Bucket) {
     if ((claimed.meta.changes ?? 0) !== 1) continue;
     try { await bucket.delete(attachment.object_key); await db.prepare("DELETE FROM uranus_attachments WHERE id=? AND status='deleting'").bind(attachment.id).run(); }
     catch { await db.prepare("UPDATE uranus_attachments SET last_error_code='R2_DELETE_FAILED', updated_at=? WHERE id=?").bind(Date.now(), attachment.id).run(); }
+  }
+}
+
+async function processAttachmentDelete(db: D1Database, bucket: R2Bucket, jobId: string, owner: string, id: string) {
+  const attachment = await db.prepare(`SELECT a.object_key FROM uranus_attachments a JOIN uranus_notes n ON n.id=a.note_id
+    WHERE a.id=? AND a.status='deleting' AND n.purge_pending=0
+    AND NOT EXISTS (SELECT 1 FROM uranus_attachment_refs WHERE attachment_id=a.id)
+    AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=? AND lease_owner=? AND lease_until>?)
+    AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')`).bind(id, jobId, owner, Date.now()).first<{ object_key: string }>();
+  if (!attachment) {
+    if (!(await db.prepare("SELECT 1 FROM uranus_attachments WHERE id=?").bind(id).first())) await finishJob(db, jobId, owner);
+    else await retryJob(db, jobId, owner, "ATTACHMENT_DELETE_BLOCKED");
+    return;
+  }
+  if (!attachment.object_key.startsWith("uranus/attachments/")) {
+    await retryJob(db, jobId, owner, "INVALID_ATTACHMENT_KEY");
+    return;
+  }
+  try {
+    // R2 delete is idempotent: also completes a prior R2 success / D1 failure.
+    await bucket.delete(attachment.object_key);
+    await db.prepare(`DELETE FROM uranus_attachments WHERE id=? AND status='deleting'
+      AND NOT EXISTS (SELECT 1 FROM uranus_attachment_refs WHERE attachment_id=?)
+      AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=? AND lease_owner=? AND lease_until>?)`).bind(id, id, jobId, owner, Date.now()).run();
+    if (!(await db.prepare("SELECT 1 FROM uranus_attachments WHERE id=?").bind(id).first())) await finishJob(db, jobId, owner);
+    else await retryJob(db, jobId, owner, "ATTACHMENT_DELETE_BLOCKED");
+  } catch {
+    await db.prepare("UPDATE uranus_attachments SET last_error_code='R2_DELETE_FAILED', updated_at=? WHERE id=? AND status='deleting'").bind(Date.now(), id).run();
+    await retryJob(db, jobId, owner, "R2_DELETE_FAILED");
   }
 }
