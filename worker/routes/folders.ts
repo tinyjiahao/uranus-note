@@ -11,15 +11,15 @@ const idOf = (value: string) => {
   return id;
 };
 
-folderRoutes.get("/", async (c) => c.json(await listFolders(c.env.DB)));
+folderRoutes.get("/", async (c) => c.json(await listFolders(c.env.DB, c.get("accountSession"))));
 folderRoutes.post("/", async (c) => {
   const parsed = folderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "文件夹名称无效");
-  return c.json(await createFolder(c.env.DB, parsed.data.name), 201);
+  return c.json(await createFolder(c.env.DB, parsed.data.name, c.get("accountSession")), 201);
 });
 folderRoutes.patch("/:id", async (c) => {
   const parsed = folderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "文件夹名称无效");
-  return c.json(await renameFolder(c.env.DB, idOf(c.req.param("id")), parsed.data.name));
+  return c.json(await renameFolder(c.env.DB, idOf(c.req.param("id")), parsed.data.name, c.get("accountSession")));
 });
-folderRoutes.delete("/:id", async (c) => c.json(await deleteFolder(c.env.DB, idOf(c.req.param("id")))));
+folderRoutes.delete("/:id", async (c) => c.json(await deleteFolder(c.env.DB, idOf(c.req.param("id")), c.get("accountSession"))));

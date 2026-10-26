@@ -1,8 +1,8 @@
 import { expect, test } from "./fixtures";
-import { testApiToken } from "./credentials";
+import { testEmail, testPassword } from "./credentials";
 
 test("editor font size is a persistent local preference, not a content edit", async ({ page }) => {
-  await page.goto("/login"); await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.goto("/login"); await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   const editor = page.locator(".prose-editor");

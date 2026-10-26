@@ -19,7 +19,7 @@ it("returns bounded normalized page fragments with title priority and Unicode ra
   const byTitle = await listNotes(env.DB, { q: "ux😀" });
   expect(byTitle.items[0]!.searchMatch!.source).toBe("title");
   expect((await listNotes(env.DB, {})).items.every(item => !item.searchMatch)).toBe(true);
-  expect((await listNotes(env.DB, { folderId: 999999, q: "abc😀" })).items).toHaveLength(0);
+  await expect(listNotes(env.DB, { folderId: 999999, q: "abc😀" })).rejects.toMatchObject({ status: 404 });
   const longQuery = "😀".repeat(100);
   await createNote(env.DB, { operation_id: uuidv7(), content_schema_version: 4, content: { type: "doc", content: [
     { type: "paragraph", content: [{ type: "text", text: "长查询" }] },

@@ -8,7 +8,6 @@ interface __BaseEnv_CloudflareEnv {
 	APP_ENV: "production";
 	APP_ORIGIN: "https://note.searchdiff.com";
 	SESSION_TTL_SECONDS: "86400";
-	API_TOKEN: string;
 	SESSION_SECRET: string;
 }
 declare namespace Cloudflare {
@@ -22,7 +21,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_ENV" | "APP_ORIGIN" | "SESSION_TTL_SECONDS" | "API_TOKEN" | "SESSION_SECRET">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_ENV" | "APP_ORIGIN" | "SESSION_TTL_SECONDS" | "SESSION_SECRET">> {}
 }
 declare module "*.txt" {
 	const value: string;

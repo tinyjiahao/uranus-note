@@ -1,12 +1,21 @@
 import type { ContentNode, NoteDetail } from "../../shared/dto";
 import { patchNote, uuidv7, type NotePatch } from "../api/client";
 import { deleteDraftIfSequence, putDraft } from "./drafts";
+import { identity, identityMatches } from "./identity";
 
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
 export type SaveInfo = { localSaved: boolean; localError?: boolean; confirmedAt?: number };
 type Queued = { patch: NotePatch; sequence: number; operationId: string };
 
 export class NoteSaveQueue {
+  private owner = identity();
+  private disposed = false;
+  private valid() { return !this.disposed && identityMatches(this.owner); }
+  dispose() {
+    this.disposed = true;
+    window.clearTimeout(this.saveTimer);
+    void this.persistLocal();
+  }
   private revision: number;
   private pending: Queued | undefined;
   private failed: Queued | undefined;
@@ -43,6 +52,7 @@ export class NoteSaveQueue {
     this.scheduleSync();
   }
   private scheduleSync() {
+    if (!this.valid()) return;
     if (this.saveTimer !== undefined || this.running || !this.hasUnsaved() || this.status === "conflict") return;
     if (this.failed) {
       const status = (this.lastError as (Error & { status?: number }) | undefined)?.status;
@@ -57,13 +67,14 @@ export class NoteSaveQueue {
     if (this.latestContent && this.confirmedSequence < this.sequence) await this.persist(this.sequence, this.latestContent);
   }
   private report(status: SaveStatus, note?: NoteDetail, error?: Error) {
+    if (!this.valid()) return;
     this.status = status; this.lastError = error;
     this.onStatus(status, note, error, { localSaved: this.localSequence === this.sequence, localError: this.localError, ...(this.confirmedAt ? { confirmedAt: this.confirmedAt } : {}) });
   }
   private async persist(sequence: number, content: ContentNode) {
     try {
-      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: 5, editSequence: sequence, updatedAt: Date.now(), content });
-      if (sequence <= this.confirmedSequence) { await deleteDraftIfSequence(this.noteId, sequence); return; }
+      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: 5, editSequence: sequence, updatedAt: Date.now(), content }, this.owner.userId);
+      if (sequence <= this.confirmedSequence && this.valid()) { await deleteDraftIfSequence(this.noteId, sequence, this.owner.userId); return; }
       if (stored) { this.localSequence = Math.max(this.localSequence, sequence); if (sequence === this.sequence) this.localError = false; }
       if (sequence === this.sequence) this.report(this.status, undefined, this.lastError);
     } catch { /* A failed local copy must not claim to be safely stored. Server saving still runs. */
@@ -78,12 +89,13 @@ export class NoteSaveQueue {
     const sequences = [this.failed?.sequence, this.pending?.sequence].filter((value): value is number => value !== undefined);
     this.failed = undefined; this.pending = undefined; this.revision = revision;
     this.confirmedSequence = this.sequence;
-    for (const sequence of sequences) void deleteDraftIfSequence(this.noteId, sequence);
+    for (const sequence of sequences) void deleteDraftIfSequence(this.noteId, sequence, this.owner.userId);
     this.latestContent = undefined;
     this.report("saved");
   }
 
   enqueue(patch: NotePatch, debounce?: number) {
+    if (!this.valid()) return;
     const sequence = ++this.sequence;
     this.pending = { patch: { ...this.pending?.patch, ...patch }, sequence, operationId: this.pending?.operationId ?? uuidv7() };
     this.report(this.failed ? this.status : "dirty", undefined, this.failed ? this.lastError : undefined);
@@ -100,9 +112,14 @@ export class NoteSaveQueue {
   }
 
   async flush(keepalive = false, drainPending = true) {
+    if (!this.valid()) return;
+    // A mount/cleanup flush with no work must not capture edits enqueued later
+    // while yielding to IndexedDB (notably React StrictMode's effect replay).
+    if (!this.hasUnsaved()) return;
     window.clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     await this.persistLocal();
+    if (!this.valid()) return;
     if (this.status === "conflict") return;
     const target = this.failed ?? this.pending;
     if (keepalive && target && new TextEncoder().encode(JSON.stringify(target.patch)).byteLength >= 60_000) { this.scheduleSync(); return; }
@@ -113,9 +130,10 @@ export class NoteSaveQueue {
   }
 
   private async drain(keepalive = false, drainPending = true) {
+    if (!this.valid()) return;
     if (this.running || (!this.failed && !this.pending)) return;
     this.running = true;
-    while (this.failed || this.pending) {
+    while (this.valid() && (this.failed || this.pending)) {
       const current = this.failed ?? this.pending!;
       if (this.failed) this.failed = undefined;
       else this.pending = undefined;
@@ -124,6 +142,7 @@ export class NoteSaveQueue {
         let result: Awaited<ReturnType<typeof patchNote>> | undefined;
         let lastError: unknown;
         for (let attempt = 0; attempt < 4; attempt++) {
+          if (!this.valid()) return;
           try { result = await patchNote(this.noteId, this.revision, current.patch, keepalive, current.operationId); break; }
           catch (error) {
             lastError = error;
@@ -132,11 +151,12 @@ export class NoteSaveQueue {
             if (attempt < 3) await new Promise((resolve) => window.setTimeout(resolve, 250 * 2 ** attempt + Math.random() * 100));
           }
         }
+        if (!this.valid()) return;
         if (!result) throw lastError;
         this.revision = result.applied_revision;
         this.confirmedSequence = Math.max(this.confirmedSequence, current.sequence);
         this.confirmedAt = Date.now();
-        await deleteDraftIfSequence(this.noteId, current.sequence).catch(() => undefined);
+        await deleteDraftIfSequence(this.noteId, current.sequence, this.owner.userId).catch(() => undefined);
         if (this.pending && this.latestContent) await this.persist(this.sequence, this.latestContent);
         this.report(this.pending ? "dirty" : "saved", result.note);
         if (!drainPending) break;

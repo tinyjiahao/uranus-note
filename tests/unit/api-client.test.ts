@@ -1,4 +1,6 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { activateIdentity } from "../../src/state/identity";
+beforeEach(() => activateIdentity("test-user"));
 import { createFolder, setCsrfToken, uploadAttachment } from "../../src/api/client";
 
 afterEach(() => { vi.unstubAllGlobals(); setCsrfToken(""); });
@@ -24,4 +26,14 @@ it("still sends JSON requests with the JSON content type", async () => {
     return Response.json({ id: 1 });
   }));
   await createFolder("test");
+});
+
+it("rejects a late response even when an underlying transport ignores abort", async () => {
+  let release!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { release = resolve; })));
+  const pending = createFolder("old-user-folder");
+  const rejected = expect(pending).rejects.toMatchObject({ code: "IDENTITY_CHANGED" });
+  activateIdentity("new-user");
+  release(Response.json({ id: 7, name: "old-user-folder" }));
+  await rejected;
 });

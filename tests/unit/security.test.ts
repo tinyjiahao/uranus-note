@@ -1,23 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { createSession, verifySession } from "../../worker/middleware/auth";
-import type { Env } from "../../worker/types";
-
-const base = {
-  DB: {} as D1Database, UPLOADS: {} as R2Bucket,
-  LOGIN_RATE_LIMITER: { limit: async () => ({ success: true }) },
-  API_TOKEN: "a".repeat(32), SESSION_SECRET: "b".repeat(32), APP_ENV: "development" as const,
-} satisfies Env;
-
-describe("signed session", () => {
-  it("accepts a valid session and rejects tampering", async () => {
-    const { token, payload } = await createSession(base);
-    expect((await verifySession(base, token))?.sid).toBe(payload.sid);
-    expect(await verifySession(base, `${token.slice(0, -1)}x`)).toBeNull();
-  });
-
-  it("invalidates sessions after session secret or API token rotation", async () => {
-    const { token } = await createSession(base);
-    expect(await verifySession({ ...base, SESSION_SECRET: "c".repeat(32) }, token)).toBeNull();
-    expect(await verifySession({ ...base, API_TOKEN: "d".repeat(32) }, token)).toBeNull();
-  });
+import { env } from "cloudflare:workers";
+import { beforeAll, expect, it } from "vitest";
+import { initializeTestAccount } from "../accountFixture";
+import { issueAccountSession, readAccountSession } from "../../worker/services/accountSessions";
+beforeAll(initializeTestAccount);
+it("rejects tampering and signing-key rotation", async () => {
+  const user = await env.DB.prepare("SELECT id,credential_version FROM uranus_users LIMIT 1").first<{ id: string; credential_version: number }>();
+  const issued = await issueAccountSession(env.DB, env.SESSION_SECRET, user!.id, user!.credential_version);
+  expect((await readAccountSession(env.DB, env.SESSION_SECRET, issued.token))?.user.id).toBe(user!.id);
+  expect(await readAccountSession(env.DB, env.SESSION_SECRET, issued.token + "x")).toBeNull();
+  expect(await readAccountSession(env.DB, "different-secret".repeat(4), issued.token)).toBeNull();
 });

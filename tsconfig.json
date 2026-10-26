@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "types": ["node", "@cloudflare/vitest-plugin/types", "vite/client", "vitest/globals"]
   },
-  "include": ["src", "worker", "shared", "tests", "cloudflare-env.d.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": ["src", "worker", "shared", "tests", "cloudflare-env.d.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "playwright.v6.config.ts"]
 }

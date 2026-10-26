@@ -2,7 +2,7 @@
 
 Uranus 是一个面向单用户自部署的 Cloudflare 原生笔记应用。React SPA、Hono API、D1 数据库和私有 R2 附件通过同一个 Worker 部署；浏览器不会直接接触 Cloudflare 资源凭据。
 
-> 当前版本：`0.2.0-preview.1`。v2 核心编辑体验已在本地实现，详情见 [v2 实现与验收](doc/implementation-v2.md)。网页令牌轮换未交付；尚未完成 staging 与生产发布验收。原 v1 未完成范围见 [实现状态](doc/implementation-status.md)。
+> 当前版本：`0.2.0-preview.1`，已接入 v6 邮箱账号与用户独立笔记空间。实际部署、验证证据及剩余人工验收见 [v6 实施记录](doc/implementation-v6.md)；不以已实现代替全项验收。旧网页令牌轮换规划已由邮箱账号方案替代。
 
 ## 已实现
 
@@ -36,18 +36,21 @@ cp wrangler.example.jsonc wrangler.jsonc
 cp .dev.vars.example .dev.vars
 ```
 
-将 `wrangler.jsonc` 中 D1/R2 改为本地配置，并在 `.dev.vars` 中填入两个不同的、至少 32 字节的随机值：
+将 `wrangler.jsonc` 中 D1/R2 改为本地配置，SESSION_SECRET 至少 32 字节随机值；初始化密码由部署者自行设置（8–128 个 Unicode 码点）：
 
 ```text
-API_TOKEN="..."
+ADMIN_INITIAL_PASSWORD="..."
 SESSION_SECRET="..."
 ```
 
-不要使用 Cloudflare API Token 作为应用令牌。可用 `openssl rand -base64 48` 分别生成两个值。
+用 `openssl rand -base64 48` 生成会话密钥。v6 不再使用应用 API_TOKEN。
 
 ```bash
 npm run cf:typegen
 npm run db:migrate:local
+npm run backup -- backups/initial-local
+node scripts/local-operations.mjs initialize admin@example.com backups/initial-local
+node scripts/local-operations.mjs resume <备份输出的维护-id>
 npm run dev
 ```
 
@@ -65,15 +68,14 @@ npm run test:e2e
 
 `preview` 使用 Cloudflare Vite Plugin 在 Workers Runtime 中运行构建后的 Worker 和 bindings，不是普通静态文件服务器。浏览器测试优先使用系统 Chrome；当前配置适配了 Playwright 不再提供旧 macOS Chromium 构建的环境。
 
-浏览器测试从未提交的 `.dev.vars` 读取 `API_TOKEN`，也可通过环境变量 `URANUS_TEST_API_TOKEN` 提供测试目标的应用令牌。不要将真实令牌写入测试源码。`.dev.vars*`（示例除外）、`.env*`（示例除外）、真实 Wrangler 配置、本地数据库、备份和测试截图/trace 均不提交。
+浏览器测试使用 URANUS_TEST_EMAIL / URANUS_TEST_PASSWORD；本地可从未提交的 .dev.vars 读取 ADMIN_INITIAL_PASSWORD。凭据、真实配置、数据库、备份及测试产物均不提交。
 
 ## 部署
 
-部署前阅读 [部署指南](doc/deployment.md)，创建独立的 D1、私有 R2 和 Rate Limiting binding，执行远端 migrations，再设置 Secrets 和发布。生产配置不得提交到仓库。
+部署前阅读 [部署指南](doc/deployment.md)，配置 D1、私有 R2 和 Rate Limiting binding。升级既有实例须先受控冻结、加密备份并验证恢复，再追加 migrations、初始化归属和切换新 Worker；不能直接覆盖旧鉴权。生产配置不得提交到仓库。
 
 ```bash
 npm run db:migrate:remote
-npx wrangler secret put API_TOKEN
 npx wrangler secret put SESSION_SECRET
 npm run deploy
 ```
@@ -82,7 +84,7 @@ API 摘要见 [API 文档](doc/api.md)，备份与恢复见 [运维指南](doc/b
 
 ## 隐私与安全
 
-Uranus 不包含遥测、广告或第三方脚本。笔记正文和附件以明文存放在部署者控制的 D1/R2 与运维备份中；客户端“只读”只是防误触偏好，不是权限边界。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
+Uranus 不包含遥测、广告或第三方脚本。笔记正文和附件以明文存放在部署者控制的 D1/R2 中；v6 本地运维备份采用独立密钥加密；客户端“只读”只是防误触偏好，不是权限边界。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## License
 

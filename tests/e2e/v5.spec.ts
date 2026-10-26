@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "./fixtures";
-import { testApiToken } from "./credentials";
+import { testEmail, testPassword } from "./credentials";
 
 async function open(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/login");
-  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   await expect(page.locator(".prose-editor")).toBeVisible();
@@ -47,6 +47,25 @@ for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTabl
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
   await expect(increase).toBeDisabled();
   await expect(decrease).toBeDisabled();
+});
+
+test("ordered list markers cycle by indentation depth", async ({ page }) => {
+  await open(page);
+  const editor = page.locator(".prose-editor");
+  const increase = page.getByRole("button", { name: "增加缩进", exact: true });
+  await editor.click();
+  await page.getByRole("button", { name: "有序列表", exact: true }).click();
+  await page.keyboard.insertText("一级");
+  for (const text of ["二级", "三级", "四级"]) {
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText(text);
+    await increase.click();
+  }
+
+  await expect(editor.locator("ol")).toHaveCount(4);
+  expect(await editor.locator("ol").evaluateAll(elements => elements.map(element => getComputedStyle(element).listStyleType))).toEqual([
+    "decimal", "lower-alpha", "lower-roman", "decimal",
+  ]);
 });
 
 for (const inTable of [false, true]) test(`empty task item accepts clicks and typing ${inTable ? "inside a cell" : "in the body"}`, async ({ page }) => {
@@ -115,8 +134,10 @@ test("link actions popup is compact and keeps edit/remove behavior", async ({ pa
   const popup = page.getByRole("dialog", { name: "链接操作" });
   for (const theme of ["light", "dark"]) {
     await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+    await expect(editor.locator("a")).toHaveCSS("color", theme === "dark" ? "rgb(252, 184, 39)" : "rgb(39, 107, 210)");
     await editor.locator("a").click();
     await expect(popup).toBeVisible();
+    await expect(popup.locator(".link-actions-url")).toHaveCount(0);
     expect((await popup.boundingBox())!.width).toBeLessThanOrEqual(240);
     await expect(popup.getByRole("button", { name: "打开链接" })).toHaveCSS("font-size", "13px");
     await page.keyboard.press("Escape");
@@ -134,6 +155,22 @@ test("link actions popup is compact and keeps edit/remove behavior", async ({ pa
   await popup.getByRole("button", { name: "移除链接" }).click();
   await expect(editor.locator("a")).toHaveCount(0);
   await expect(editor).toContainText("cloudflare");
+});
+
+test("dark theme separates table headers and quotes from the editor background", async ({ page }) => {
+  await open(page);
+  const editor = page.locator(".prose-editor");
+  await editor.click();
+  await page.getByRole("button", { name: "引用", exact: true }).click();
+  await page.keyboard.insertText("深色引用");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "表格", exact: true }).click();
+  await page.getByRole("button", { name: "2 行 2 列", exact: true }).click();
+
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await expect(editor.locator("blockquote")).toHaveCSS("background-color", "rgb(50, 49, 43)");
+  await expect(editor.locator("th").first()).toHaveCSS("background-color", "rgb(59, 57, 50)");
 });
 
 test("v5 shortcut save, cross-mark find, semantic small text and link dialog persist", async ({ page }) => {

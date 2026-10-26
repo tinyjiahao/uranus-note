@@ -1,10 +1,21 @@
-import { expect, test, type Page } from "./fixtures";
-import { testApiToken } from "./credentials";
+// This suite verifies the production 30s default, not the general 5s fixture.
+import { expect, test, type Page } from "@playwright/test";
+import { testEmail, testPassword } from "./credentials";
 
 async function open(page: Page) {
+  if (process.env.URANUS_SYNC_DIAGNOSTICS === "1") {
+    page.on("console", message => { if (message.text().startsWith("SYNC_DIAGNOSTIC")) console.log(message.text()); });
+    await page.addInitScript(() => {
+      const original = window.fetch;
+      window.fetch = function (input, init) {
+        if (init?.method === "PATCH") console.debug("SYNC_DIAGNOSTIC", document.visibilityState, localStorage.getItem("uranus.syncIntervalSeconds"), new Error().stack);
+        return original.call(this, input, init);
+      };
+    });
+  }
   await page.addInitScript(() => localStorage.removeItem("uranus.syncIntervalSeconds"));
   await page.goto("/login");
-  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   await expect(page.locator(".prose-editor")).toBeVisible();
@@ -18,8 +29,9 @@ test("local draft, configurable remote sync, and settings blur remain separate",
   await expect(page.locator(".save-state")).toContainText("已存本机");
   expect(patches).toHaveLength(0);
   const noteId = Number(page.url().split("/").at(-1));
-  const draft = await page.evaluate(async id => new Promise<{ content: unknown }>((resolve, reject) => {
-    const request = indexedDB.open("uranus-drafts", 1);
+  const userId = (await (await page.request.get("/api/session")).json()).user.id as string;
+  const draft = await page.evaluate(async ({ id, userId }) => new Promise<{ content: unknown }>((resolve, reject) => {
+    const request = indexedDB.open("uranus-drafts-v6:" + userId, 1);
     request.onsuccess = () => {
       const db = request.result;
       const get = db.transaction("drafts").objectStore("drafts").get(id);
@@ -27,7 +39,7 @@ test("local draft, configurable remote sync, and settings blur remain separate",
       get.onerror = () => reject(get.error);
     };
     request.onerror = () => reject(request.error);
-  }), noteId);
+  }), { id: noteId, userId });
   expect(JSON.stringify(draft.content)).toContain("先保存本机的正文");
   await page.getByRole("button", { name: "设置", exact: true }).click();
   const interval = page.getByLabel("远程同步间隔（秒）");

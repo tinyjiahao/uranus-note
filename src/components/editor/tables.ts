@@ -68,8 +68,6 @@ const Header = TableHeader.extend({ content: cellContent, addAttributes() { retu
 
 class UranusTableView extends TableView {
   private cancelDrag: (() => void) | undefined;
-  private appendRow: HTMLButtonElement;
-  private appendColumn: HTMLButtonElement;
   private stage: HTMLDivElement;
   private handles: HTMLDivElement;
   private rowNumbers: HTMLDivElement;
@@ -83,20 +81,6 @@ class UranusTableView extends TableView {
     this.stage.appendChild(this.handles);
     this.rowNumbers = document.createElement("div"); this.rowNumbers.className = "table-row-numbers"; this.rowNumbers.contentEditable = "false";
     this.stage.appendChild(this.rowNumbers);
-    const add = (label: string, kind: "row" | "column") => {
-      const button = document.createElement("button"); button.type = "button"; button.contentEditable = "false";
-      button.textContent = "+"; button.title = label; button.setAttribute("aria-label", label); button.className = `table-add-${kind}`;
-      button.onmousedown = event => event.preventDefault();
-      button.onclick = () => {
-        const pos = this.getPos(); if (pos === undefined || !editor.isEditable) return;
-        const map = TableMap.get(this.node); const cell = map.map[map.map.length - 1]; if (cell === undefined) return;
-        editor.commands.setTextSelection(pos + 3 + cell);
-        if (kind === "row") editor.commands.addRowAfter(); else editor.commands.addColumnAfter();
-        editor.view.focus();
-      };
-      this.stage.appendChild(button); return button;
-    };
-    this.appendRow = add("在表格底部追加一行", "row"); this.appendColumn = add("在表格右侧追加一列", "column");
     this.table.addEventListener("pointermove", this.hover);
     this.table.addEventListener("pointerdown", this.startDrag);
     this.table.addEventListener("contextmenu", this.contextMenu);
@@ -246,7 +230,6 @@ class UranusTableView extends TableView {
     this.table.style.minWidth = `${count * 64}px`;
     if (node.attrs.widthMode !== "fixed") this.table.style.width = "100%";
     this.stage.style.width = node.attrs.widthMode === "fixed" ? this.table.style.width : "100%";
-    this.appendRow.hidden = this.appendColumn.hidden = !this.editor.isEditable;
     cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(this.layoutHandles);
     return true;
   }

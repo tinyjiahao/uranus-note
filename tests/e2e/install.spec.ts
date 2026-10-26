@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "./fixtures";
-import { testApiToken } from "./credentials";
+import { testEmail, testPassword } from "./credentials";
 
 async function login(page: Page) {
   await page.goto("/login");
-  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByText("关于与部署", { exact: true }).click();

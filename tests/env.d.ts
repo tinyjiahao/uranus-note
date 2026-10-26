@@ -7,7 +7,6 @@ declare global {
       UPGRADE_DB: D1Database;
       UPLOADS: R2Bucket;
       TEST_MIGRATIONS: D1Migration[];
-      API_TOKEN: string;
       SESSION_SECRET: string;
       APP_ENV: "development";
       APP_ORIGIN: "http://uranus.test";

@@ -1,46 +1,50 @@
 import { ApiError } from "../lib/http";
 import { randomId, requestHash } from "../lib/crypto";
 import { existingOperation, validateOperationId } from "./operations";
+import type { AccountSession } from "./accountSessions";
+import { businessWrite } from "./businessWrite";
+import { getNote } from "./notes";
 
-export async function queueHardDelete(db: D1Database, noteId: number, input: { operation_id: string; expected_revision: number }) {
+export async function queueHardDelete(db: D1Database, noteId: number, input: { operation_id: string; expected_revision: number }, session?: AccountSession) {
   validateOperationId(input.operation_id);
   const hash = await requestHash("DELETE", `/api/notes/${noteId}?hard=1`, input);
-  const replay = await existingOperation(db, input.operation_id, hash);
+  const replay = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
   if (replay?.status === "succeeded" && replay.result_id) return { operation_id: input.operation_id, job_id: replay.result_id, status: "queued" };
   if (replay) throw new ApiError(replay.status === "pending" ? 202 : 409, replay.result_code ?? "PURGE_FAILED", "清除操作未完成");
+  await getNote(db, noteId, session);
   const jobId = randomId();
   const now = Date.now();
-  await db.batch([
-    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'note.purge', ?, 'pending', ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000),
+  await businessWrite(db, session, [
+    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'note.purge', ?, 'pending', ?, ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000, session?.user.id ?? null),
     db.prepare("UPDATE uranus_notes SET purge_pending=1, revision=revision+1, last_operation_id=?, updated_at=? WHERE id=? AND revision=? AND deleted_at IS NOT NULL AND purge_pending=0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(input.operation_id, now, noteId, input.expected_revision),
-    db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at) SELECT ?, ?, 'queued', 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=? AND purge_pending=1)").bind(jobId, `purge_note:${noteId}`, now, now, now, noteId, input.operation_id),
+    db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at, user_id) SELECT ?, ?, 'queued', 0, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=? AND purge_pending=1)").bind(jobId, `purge_note:${noteId}`, now, now, now, session?.user.id ?? null, noteId, input.operation_id),
     db.prepare("UPDATE uranus_operations SET status='succeeded', result_id=?, result_revision=? WHERE operation_id=? AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=?)").bind(jobId, input.expected_revision + 1, input.operation_id, jobId),
     db.prepare("UPDATE uranus_operations SET status='failed', result_code='REVISION_CONFLICT' WHERE operation_id=? AND status='pending'").bind(input.operation_id),
   ]);
-  const operation = await existingOperation(db, input.operation_id, hash);
+  const operation = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
   if (operation?.status !== "succeeded") throw new ApiError(409, "REVISION_CONFLICT", "笔记状态已改变");
   return { operation_id: input.operation_id, job_id: jobId, status: "queued" };
 }
 
-export async function queueEmptyTrash(db: D1Database, operationId: string) {
+export async function queueEmptyTrash(db: D1Database, operationId: string, session?: AccountSession) {
   validateOperationId(operationId);
   const hash = await requestHash("POST", "/api/notes/empty-trash", { operation_id: operationId });
-  const replay = await existingOperation(db, operationId, hash);
+  const replay = await existingOperation(db, operationId, hash, session?.user.id ?? null);
   if (replay?.status === "succeeded" && replay.result_id) return { operation_id: operationId, job_id: replay.result_id, status: "queued" };
   if (replay) throw new ApiError(replay.status === "pending" ? 202 : 409, replay.result_code ?? "EMPTY_TRASH_FAILED", "清空操作未完成");
   const jobId = randomId();
   const now = Date.now();
-  await db.batch([
-    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'trash.empty', ?, 'pending', ?, ?)").bind(operationId, hash, now, now + 604_800_000),
-    db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at) SELECT ?, 'empty_trash', 'queued', 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(jobId, now, now, now),
+  await businessWrite(db, session, [
+    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'trash.empty', ?, 'pending', ?, ?, ?)").bind(operationId, hash, now, now + 604_800_000, session?.user.id ?? null),
+    db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at, user_id) SELECT ?, 'empty_trash', 'queued', 0, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(jobId, now, now, now, session?.user.id ?? null),
     db.prepare("UPDATE uranus_operations SET status='succeeded', result_id=? WHERE operation_id=? AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=?)").bind(jobId, operationId, jobId),
     db.prepare("UPDATE uranus_operations SET status='failed', result_code='MAINTENANCE_MODE' WHERE operation_id=? AND status='pending'").bind(operationId),
   ]);
   return { operation_id: operationId, job_id: jobId, status: "queued" };
 }
 
-export async function getJob(db: D1Database, id: string) {
-  const job = await db.prepare("SELECT id, kind, status, cursor, attempt, next_attempt_at, last_error_code, created_at, updated_at FROM uranus_maintenance_jobs WHERE id=?").bind(id).first();
+export async function getJob(db: D1Database, id: string, session?: AccountSession) {
+  const job = await db.prepare("SELECT id, kind, status, cursor, attempt, next_attempt_at, last_error_code, created_at, updated_at FROM uranus_maintenance_jobs WHERE id=? AND user_id IS ?").bind(id, session?.user.id ?? null).first();
   if (!job) throw new ApiError(404, "JOB_NOT_FOUND", "维护任务不存在");
   return job;
 }
@@ -62,10 +66,16 @@ async function retryJob(db: D1Database, jobId: string, owner: string, code: stri
   await db.prepare("UPDATE uranus_maintenance_jobs SET status=?, next_attempt_at=?, last_error_code=?, lease_owner=NULL, lease_until=NULL, updated_at=? WHERE id=? AND lease_owner=?").bind(failed ? "failed" : "retry_wait", failed ? null : Date.now() + delay + Math.floor(Math.random() * 10_000), code, Date.now(), jobId, owner).run();
 }
 
-async function processPurgeNote(db: D1Database, bucket: R2Bucket, jobId: string, owner: string, noteId: number) {
+async function processPurgeNote(db: D1Database, bucket: R2Bucket, jobId: string, owner: string, noteId: number, userId: string | null) {
+  if (!await db.prepare("SELECT id FROM uranus_notes WHERE id=? AND user_id IS ? AND purge_pending=1").bind(noteId, userId).first()) {
+    await retryJob(db, jobId, owner, "PURGE_OWNER_MISMATCH");
+    return;
+  }
   const attachments = await db.prepare("SELECT id, object_key FROM uranus_attachments WHERE note_id=? LIMIT 20").bind(noteId).all<{ id: string; object_key: string }>();
   for (const attachment of attachments.results) {
-    await db.prepare("UPDATE uranus_attachments SET status='deleting', updated_at=? WHERE id=? AND note_id=? AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=? AND lease_owner=? AND lease_until>?)").bind(Date.now(), attachment.id, noteId, jobId, owner, Date.now()).run();
+    const claimed = await db.prepare("UPDATE uranus_attachments SET status='deleting', updated_at=? WHERE id=? AND note_id=? AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=? AND user_id IS ? AND lease_owner=? AND lease_until>?) AND EXISTS(SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(Date.now(), attachment.id, noteId, jobId, userId, owner, Date.now()).run();
+    if (claimed.meta.changes !== 1) return;
+    if (!attachment.object_key.startsWith("uranus/attachments/")) { await retryJob(db, jobId, owner, "INVALID_ATTACHMENT_KEY"); return; }
     try {
       await bucket.delete(attachment.object_key);
       await db.prepare("DELETE FROM uranus_attachments WHERE id=? AND status='deleting'").bind(attachment.id).run();
@@ -86,17 +96,17 @@ async function processPurgeNote(db: D1Database, bucket: R2Bucket, jobId: string,
   ]);
 }
 
-async function processEmptyTrash(db: D1Database, jobId: string, owner: string) {
-  const notes = await db.prepare("SELECT id FROM uranus_notes WHERE deleted_at IS NOT NULL AND purge_pending=0 ORDER BY id LIMIT 50").all<{ id: number }>();
+async function processEmptyTrash(db: D1Database, jobId: string, owner: string, userId: string | null) {
+  const notes = await db.prepare("SELECT id FROM uranus_notes WHERE user_id IS ? AND deleted_at IS NOT NULL AND purge_pending=0 ORDER BY id LIMIT 50").bind(userId).all<{ id: number }>();
   const now = Date.now();
   const statements: D1PreparedStatement[] = [];
   for (const note of notes.results) {
     const childJob = randomId();
-    statements.push(db.prepare("UPDATE uranus_notes SET purge_pending=1, revision=revision+1, updated_at=? WHERE id=? AND deleted_at IS NOT NULL AND purge_pending=0").bind(now, note.id));
-    statements.push(db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at) SELECT ?, ?, 'queued', 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND purge_pending=1)").bind(childJob, `purge_note:${note.id}`, now, now, now, note.id));
+    statements.push(db.prepare("UPDATE uranus_notes SET purge_pending=1, revision=revision+1, updated_at=? WHERE id=? AND user_id IS ? AND deleted_at IS NOT NULL AND purge_pending=0 AND EXISTS(SELECT 1 FROM uranus_maintenance_jobs WHERE id=? AND lease_owner=? AND lease_until>?) AND EXISTS(SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(now, note.id, userId, jobId, owner, now));
+    statements.push(db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at, user_id) SELECT ?, ?, 'queued', 0, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND user_id IS ? AND purge_pending=1)").bind(childJob, `purge_note:${note.id}`, now, now, now, userId, note.id, userId));
   }
   if (statements.length) await db.batch(statements);
-  const remaining = await db.prepare("SELECT 1 FROM uranus_notes WHERE deleted_at IS NOT NULL AND purge_pending=0 LIMIT 1").first();
+  const remaining = await db.prepare("SELECT 1 FROM uranus_notes WHERE user_id IS ? AND deleted_at IS NOT NULL AND purge_pending=0 LIMIT 1").bind(userId).first();
   if (remaining) await db.prepare("UPDATE uranus_maintenance_jobs SET status='queued', lease_owner=NULL, lease_until=NULL, next_attempt_at=?, updated_at=? WHERE id=? AND lease_owner=?").bind(now, now, jobId, owner).run();
   else await finishJob(db, jobId, owner);
 }
@@ -108,7 +118,7 @@ export async function discoverExpiredTrash(db: D1Database) {
     const jobId = randomId();
     await db.batch([
       db.prepare("UPDATE uranus_notes SET purge_pending=1, revision=revision+1, updated_at=? WHERE id=? AND deleted_at IS NOT NULL AND purge_pending=0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(now, note.id),
-      db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at) SELECT ?, ?, 'queued', 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND purge_pending=1)").bind(jobId, `purge_note:${note.id}`, now, now, now, note.id),
+      db.prepare("INSERT INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at, user_id) SELECT ?, ?, 'queued', 0, ?, ?, ?, user_id FROM uranus_notes WHERE id=? AND purge_pending=1").bind(jobId, `purge_note:${note.id}`, now, now, now, note.id),
     ]);
   }
 }
@@ -118,8 +128,8 @@ export async function processMaintenance(db: D1Database, bucket: R2Bucket) {
   if (!(await db.prepare("SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal'").first())) return;
   // Recover interrupted attachment deletes, including records left by older clients.
   // A stable job id prevents repeated scans from resetting retry limits/backoff.
-  await db.prepare(`INSERT OR IGNORE INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at)
-    SELECT 'delete_attachment:' || a.id, 'delete_attachment:' || a.id, 'queued', 0, ?, ?, ?
+  await db.prepare(`INSERT OR IGNORE INTO uranus_maintenance_jobs(id, kind, status, attempt, next_attempt_at, created_at, updated_at, user_id)
+    SELECT 'delete_attachment:' || a.id, 'delete_attachment:' || a.id, 'queued', 0, ?, ?, ?, n.user_id
     FROM uranus_attachments a JOIN uranus_notes n ON n.id=a.note_id
     WHERE a.status='deleting' AND a.updated_at<=? AND n.purge_pending=0
       AND NOT EXISTS (SELECT 1 FROM uranus_attachment_refs WHERE attachment_id=a.id)
@@ -128,14 +138,14 @@ export async function processMaintenance(db: D1Database, bucket: R2Bucket) {
   await db.prepare(`UPDATE uranus_maintenance_jobs SET status=CASE WHEN attempt>=8 THEN 'failed' ELSE 'retry_wait' END,
     lease_owner=NULL, lease_until=NULL, next_attempt_at=CASE WHEN attempt>=8 THEN NULL ELSE ? END, last_error_code='LEASE_EXPIRED', updated_at=?
     WHERE kind LIKE 'delete_attachment:%' AND status='running' AND lease_until<=?`).bind(now, now, now).run();
-  const jobs = await db.prepare("SELECT id, kind FROM uranus_maintenance_jobs WHERE status IN ('queued','retry_wait') AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY created_at LIMIT 5").bind(now).all<{ id: string; kind: string }>();
+  const jobs = await db.prepare("SELECT id, kind, user_id FROM uranus_maintenance_jobs WHERE status IN ('queued','retry_wait') AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY created_at LIMIT 5").bind(now).all<{ id: string; kind: string; user_id: string | null }>();
   for (const job of jobs.results) {
     const owner = randomId();
     if (!(await acquireJob(db, job.id, owner, Date.now()))) continue;
     try {
-      if (job.kind === "empty_trash") await processEmptyTrash(db, job.id, owner);
-      else if (job.kind.startsWith("delete_attachment:")) await processAttachmentDelete(db, bucket, job.id, owner, job.kind.slice(18));
-      else if (job.kind.startsWith("purge_note:")) await processPurgeNote(db, bucket, job.id, owner, Number(job.kind.slice(11)));
+      if (job.kind === "empty_trash") await processEmptyTrash(db, job.id, owner, job.user_id);
+      else if (job.kind.startsWith("delete_attachment:")) await processAttachmentDelete(db, bucket, job.id, owner, job.kind.slice(18), job.user_id);
+      else if (job.kind.startsWith("purge_note:")) await processPurgeNote(db, bucket, job.id, owner, Number(job.kind.slice(11)), job.user_id);
       else await retryJob(db, job.id, owner, "UNKNOWN_JOB_KIND");
     } catch {
       await retryJob(db, job.id, owner, "JOB_EXECUTION_FAILED");
@@ -150,12 +160,12 @@ export async function processMaintenance(db: D1Database, bucket: R2Bucket) {
   }
 }
 
-async function processAttachmentDelete(db: D1Database, bucket: R2Bucket, jobId: string, owner: string, id: string) {
+async function processAttachmentDelete(db: D1Database, bucket: R2Bucket, jobId: string, owner: string, id: string, userId: string | null) {
   const attachment = await db.prepare(`SELECT a.object_key FROM uranus_attachments a JOIN uranus_notes n ON n.id=a.note_id
-    WHERE a.id=? AND a.status='deleting' AND n.purge_pending=0
+    WHERE a.id=? AND n.user_id IS ? AND a.status='deleting' AND n.purge_pending=0
     AND NOT EXISTS (SELECT 1 FROM uranus_attachment_refs WHERE attachment_id=a.id)
     AND EXISTS (SELECT 1 FROM uranus_maintenance_jobs WHERE id=? AND lease_owner=? AND lease_until>?)
-    AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')`).bind(id, jobId, owner, Date.now()).first<{ object_key: string }>();
+    AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')`).bind(id, userId, jobId, owner, Date.now()).first<{ object_key: string }>();
   if (!attachment) {
     if (!(await db.prepare("SELECT 1 FROM uranus_attachments WHERE id=?").bind(id).first())) await finishJob(db, jobId, owner);
     else await retryJob(db, jobId, owner, "ATTACHMENT_DELETE_BLOCKED");

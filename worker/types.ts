@@ -4,22 +4,14 @@ export type Env = {
   DB: D1Database;
   UPLOADS: R2Bucket;
   LOGIN_RATE_LIMITER: RateLimiterBinding;
-  API_TOKEN: string;
   SESSION_SECRET: string;
   APP_ORIGIN?: string;
   APP_ENV: "development" | "staging" | "production";
   SESSION_TTL_SECONDS?: string;
+  REGISTRATION_ENABLED?: string;
 };
 
 export type AppVariables = {
   requestId: string;
-  session: SessionPayload;
-};
-
-export type SessionPayload = {
-  sid: string;
-  iat: number;
-  exp: number;
-  tokenFingerprint: string;
-  csrf: string;
+  accountSession: import("./services/accountSessions").AccountSession | undefined;
 };

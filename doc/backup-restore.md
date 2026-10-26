@@ -1,34 +1,37 @@
-# 备份与恢复
+# v6 受控备份、恢复与初始化
 
-备份包含明文笔记、版本和附件字节。请使用受保护目录、加密磁盘和最小文件权限；不要提交到 Git。
+本地工具强制 remoteBindings:false；远程工具 `scripts/remote-operations.mjs` 显式使用 Cloudflare 受控临时预览和真实 bindings。不使用应用令牌或普通账号 Cookie，不部署公网维护路由。远程切换步骤见 deployment.md，历史验证及当前发布记录见 implementation-v6.md。
 
-## 备份
+## 本地备份与初始化
 
-令牌通过环境变量传入，不放命令行参数。工具登录后进入持久维护模式，等待可确认的在途操作排空，分页导出白名单记录并下载每个 ready 附件。
-
-```bash
-URANUS_ORIGIN=https://notes.example.com \
-URANUS_API_TOKEN='应用令牌' \
-npm run backup -- /secure/path/uranus-backup
-```
-
-输出包括 `records/*.jsonl`、`attachments/*.bin`、`manifest.json` 和完成标记 `COMPLETE`。manifest 记录格式/schema/migration 版本、计数、字节数、ETag 和 SHA-256。只有带 `COMPLETE` 且全部校验和通过的目录可用于恢复。
-
-默认成功后仍保持 frozen。确认文件后，可在首次命令前设置 `URANUS_EXIT_MAINTENANCE=1` 自动明确退出；中断时使用工具输出的 maintenance id 设置 `URANUS_MAINTENANCE_ID` 重试。不要通过更换 id 绕过仍在进行的维护。
-
-## 恢复
-
-恢复只允许 migrations 已创建、但除系统默认文件夹外没有 Uranus 业务数据的目标。其他应用在共享 D1/R2 中的对象不会被清理。先配置全新的目标 bindings、Secrets 并执行：
+先停止开发/预览服务，确认已同步草稿。工具进入 draining，存在 pending 操作、running 任务、pending/deleting 附件时拒绝继续；处理在途任务后重试，不擅自删除它们。
 
 ```bash
-npm run db:migrate:remote
-URANUS_ORIGIN=https://new-notes.example.com \
-URANUS_API_TOKEN='新目标的应用令牌' \
-npm run restore -- /secure/path/uranus-backup
+npm run db:migrate:local
+npm run backup -- backups/local-before-v6
+node scripts/local-operations.mjs initialize admin@example.com backups/local-before-v6
+# 使用备份命令输出的维护 id，确认 v6 Worker 已就绪后解除冻结：
+node scripts/local-operations.mjs resume <maintenance-id>
+npm run dev
 ```
 
-工具先验证本地清单和全部文件校验和，再进入 `restoring`。记录按依赖顺序分批导入；附件通过私有 API 写入 R2；批次 id 与校验和持久化，因此相同内容可安全重试，不同内容复用批次 id 会返回 409。搜索表从权威正文重建，不恢复会话、旧操作或运行中任务。
+初始化密码只从未提交的 .dev.vars 中 ADMIN_INITIAL_PASSWORD 读取，不能放在命令行参数。重复初始化不会重置已有账号密码。默认 admin 不是超级管理员，所有未归属业务数据归该账号的稳定 id，正文和 revision 不改写。
 
-服务端完成引用、搜索行数和附件状态检查后转为 frozen。抽样打开至少 20 篇笔记（不足时全部），检查历史版本图片，并核对附件长度/校验和；确认后设置 `URANUS_EXIT_MAINTENANCE=1` 解除冻结。恢复失败时不要发布部分目标，保留 frozen 状态并用相同 maintenance id 重试。
+备份将账号哈希、业务记录与 uranus/attachments/ 下附件逐文件 AES-256-GCM 加密，manifest 同样加密，COMPLETE 保存清单校验和。默认独立密钥位于 .wrangler/backup.key，权限 0600；可通过 URANUS_BACKUP_KEY_FILE 指向已有 32 字节密钥文件。必须单独妥善保存密钥，丢失将无法恢复，不能把密钥与备份一起公开。会话不导出。
 
-共享 D1 的整库 Time Travel 会同时影响其他应用，不能作为 Uranus 单应用恢复方案。
+## 空目标恢复演练
+
+URANUS_LOCAL_STATE_DIR 指向本地模拟状态目录，不能指向其他应用或生产资源。
+
+```bash
+URANUS_LOCAL_STATE_DIR=.wrangler/restore-check node scripts/local-operations.mjs migrate
+URANUS_LOCAL_STATE_DIR=.wrangler/restore-check npm run restore -- backups/local-before-v6
+```
+
+目标必须没有用户和业务数据；不要先初始化 admin。只清除空库 migration 生成的无归属默认 Notes，不触碰其他前缀表或对象。恢复前验证完整清单和所有密文校验和，逐批记录进度；同一备份在相同状态目录重跑可续传，其他备份不能接管。恢复完成核对计数和 Uranus 外键，保持 frozen，所有旧会话失效。账号备份保留稳定 user_id、默认账号标记与原密码哈希。
+
+迁移前的 v5 备份没有用户：恢复后须先重新完成受控备份与初始化，不能直接开放访问。已有账号的 v6 备份恢复后使用原邮箱密码登录，不再创建第二个 admin。
+
+## 当前验证范围
+
+2026-10-27：本地历史数据的加密导出和隔离目录恢复通过，包含 673 篇笔记、641 个历史版本、134 个附件记录。账号加密往返、中断续传、密文篡改拒绝、非空目标拒绝、其他应用资源保留等 8 项演练通过。远程发布的实际执行结果另记于 implementation-v6.md；独立远程空目标恢复和真机人工验收不能由本地测试替代。

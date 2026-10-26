@@ -1,9 +1,9 @@
 import { test, expect, type Page } from "./fixtures";
-import { testApiToken } from "./credentials";
+import { testEmail, testPassword } from "./credentials";
 
 async function openNew(page: Page) {
   await page.goto("/login");
-  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   await expect(page.locator(".prose-editor")).toBeVisible();
@@ -91,7 +91,10 @@ test("keyboard table insertion, last-cell Tab and ten-column narrow scrolling", 
   await page.getByRole("button", { name: "调整列宽…" }).click();
   await page.getByLabel("当前列宽").fill("120"); await page.getByRole("button", { name: "应用列宽" }).click();
   await page.getByRole("button", { name: "关闭菜单" }).click();
-  for (let i = 0; i < 9; i++) await page.getByLabel("在表格右侧追加一列").click();
+  for (let i = 0; i < 9; i++) {
+    await page.getByRole("button", { name: "表格菜单", exact: true }).click();
+    await page.getByRole("button", { name: "追加一列", exact: true }).click();
+  }
   await expect(editor.locator("tr").first().locator("td,th")).toHaveCount(10);
   await page.setViewportSize({ width: 375, height: 800 });
   expect(await editor.locator(".tableWrapper").evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
@@ -139,10 +142,15 @@ test("table picker, widths, alignment, cancellation, undo, persistence and reado
   expect((await editor.locator("th").first().boundingBox())!.width).toBeGreaterThan(250);
   await page.getByRole("button", { name: "撤销", exact: true }).click();
   expect((await editor.locator("th").first().boundingBox())!.width).toBeCloseTo(220, 0);
-  await page.getByLabel("在表格底部追加一行").click(); await expect(editor.locator("tr")).toHaveCount(4);
-  await page.getByLabel("在表格右侧追加一列").click(); await expect(editor.locator("tr").first().locator("th,td")).toHaveCount(5);
+  await page.getByRole("button", { name: "表格菜单", exact: true }).click();
+  await page.getByRole("button", { name: "追加一行", exact: true }).click(); await expect(editor.locator("tr")).toHaveCount(4);
+  await page.getByRole("button", { name: "表格菜单", exact: true }).click();
+  await page.getByRole("button", { name: "追加一列", exact: true }).click(); await expect(editor.locator("tr").first().locator("th,td")).toHaveCount(5);
   await page.getByRole("button", { name: "表格菜单", exact: true }).click();
   await page.getByRole("button", { name: "在表格下方继续输入" }).click(); await page.keyboard.insertText("表格后的正文");
+  const tableBox = (await editor.locator("table").boundingBox())!;
+  const followingBox = (await editor.getByText("表格后的正文", { exact: true }).boundingBox())!;
+  expect(followingBox.y - tableBox.y - tableBox.height).toBeLessThan(40);
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible(); await page.reload();
   await expect(editor).toContainText("表格后的正文"); await expect(editor.locator("th").first()).toHaveCSS("text-align", "right");
   expect((await editor.locator("th").first().boundingBox())!.width).toBeCloseTo(220, 0);
@@ -158,6 +166,7 @@ test("table edge handles insert in place and row menus preserve selection", asyn
   await page.getByRole("button", { name: "表格", exact: true }).click();
   await page.getByRole("button", { name: "3 行 4 列", exact: true }).click();
   await editor.locator("th").first().fill("边缘操作测试");
+  await editor.locator(".tableWrapper").hover();
   await page.getByRole("button", { name: "在第 2 行位置插入", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(editor.locator("tr")).toHaveCount(4);
@@ -173,11 +182,10 @@ test("table edge handles insert in place and row menus preserve selection", asyn
   await expect(page.getByRole("button", { name: "关闭菜单" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "表格菜单", exact: true })).toBeFocused();
+  await editor.locator(".tableWrapper").hover();
   await page.getByRole("button", { name: "在第 3 行位置插入", exact: true }).focus();
   await page.screenshot({ path: "test-results/table-edge-desktop.png" });
-  const table = (await editor.locator("table").boundingBox())!;
-  const add = (await page.getByLabel("在表格右侧追加一列").boundingBox())!;
-  expect(add.x - table.x - table.width).toBeLessThan(8);
+  await expect(page.locator(".table-add-row, .table-add-column")).toHaveCount(0);
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByLabel("主题", { exact: true }).selectOption("dark");
   await page.getByLabel("关闭设置").click();
@@ -232,7 +240,7 @@ test("soft delete undo uses the server and expired sessions conceal content", as
   await page.route("**/api/notes/*", route => route.request().method() === "PATCH" ? route.fulfill({ status: 401, json: { error: { code: "UNAUTHENTICATED", message: "请先登录" } } }) : route.continue());
   await editor.fill("会话过期后不能公开显示");
   await expect(page).toHaveURL(/\/login$/); await expect(editor).toHaveCount(0);
-  await expect(page.getByLabel("访问令牌")).toBeVisible();
+  await expect(page.getByLabel("邮箱", { exact: true })).toBeVisible();
 });
 
 test("permanent deletion reports queued, failed and confirmed completion separately", async ({ page }) => {

@@ -1,3 +1,5 @@
+import { AccountSettings } from "./AccountSettings";
+import { deploymentStatus } from "../api/client";
 import { useEffect, useRef, useState } from "react";
 import { Popup, closePopups } from "./Popup";
 import { useQuery } from "@tanstack/react-query";
@@ -15,16 +17,12 @@ export function SortControls() {
     </Popup>}
   </div>;
 }
-export function Settings({ onClose }: { onClose: () => void }) {
+export function Settings({ onClose, user, beforeSensitiveChange }: { onClose: () => void; user: import("../../shared/account").AccountIdentity; beforeSensitiveChange: () => Promise<void> }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const ui = useUiStore();
   const [syncInput, setSyncInput] = useState(String(ui.syncIntervalSeconds));
   useEffect(() => setSyncInput(String(ui.syncIntervalSeconds)), [ui.syncIntervalSeconds]);
-  const status = useQuery({ queryKey: ["deployment-status"], queryFn: async () => {
-    const response = await fetch("/api/settings/status");
-    if (!response.ok) throw new Error("无法读取服务状态");
-    return await response.json() as { version: string; configured: boolean; database: string; attachments: string };
-  } });
+  const status = useQuery({ queryKey: ["user", user.id, "deployment-status"], queryFn: deploymentStatus });
   useEffect(() => {
     closePopups();
     const trigger = document.activeElement as HTMLElement | null;
@@ -49,8 +47,8 @@ export function Settings({ onClose }: { onClose: () => void }) {
       <p>默认 30 秒，可设为 5–300 秒。停止输入 0.8 秒后存入本机草稿，持续输入时最多每 3 秒存一次；有改动时按此间隔同步。切换笔记或按 ⌘/Ctrl+S 立即同步。未同步内容仅保存在此浏览器。</p>
       <button onClick={() => { if (confirm("恢复布局、主题、宽度、字号、排序和同步间隔的默认偏好？笔记和草稿将保留。")) ui.reset(); }}>恢复默认偏好</button>
     </section>
-    <details><summary>安全</summary><p>网页登录令牌由部署端管理。网页直接换令牌尚未交付。</p><p>部署者可通过 Cloudflare Workers → 设置 → 变量和机密更换 API_TOKEN。它是本应用登录凭据，不是 Cloudflare 管理令牌。</p><p>SESSION_SECRET 用于签名会话。任一密钥更换生效后，所有设备需要重新登录。</p></details>
-    <details><summary>关于与部署</summary>{status.data ? <><p>Uranus {status.data.version}</p><p>配置：{status.data.configured ? "齐全" : "不完整"}</p><p>D1：{status.data.database}；附件：{status.data.attachments}</p></> : <p>{status.error ? "无法读取服务状态" : "正在检查服务状态…"}</p>}
+    <AccountSettings user={user} beforeSensitiveChange={beforeSensitiveChange} />
+    <details><summary>关于与部署</summary>{status.data ? <><p>Uranus {status.data.version}</p><p>配置：{status.data.configured ? "齐全" : "不完整"}</p></> : <p>{status.error ? "无法读取服务状态" : "正在检查服务状态…"}</p>}
       <InstallApp />
       <p>D1 / R2 bindings、APP_ORIGIN 和会话时长由部署配置管理。</p><a href="/deployment-guide.html" target="_blank" rel="noopener noreferrer">项目与部署指引</a>
       <p>剪切、复制、粘贴使用系统菜单或键盘快捷键。对象菜单可用 Shift+F10 打开，方向键导航，Escape 关闭。</p>

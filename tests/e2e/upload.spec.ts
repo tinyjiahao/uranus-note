@@ -1,9 +1,9 @@
 import { expect, test } from "./fixtures";
-import { testApiToken } from "./credentials";
+import { testEmail, testPassword } from "./credentials";
 
 test("image upload uses multipart and remains visible after saving and reloading", async ({ page }) => {
   await page.goto("/login");
-  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   const response = page.waitForResponse(r => r.url().endsWith("/api/attachments") && r.request().method() === "POST");
@@ -24,7 +24,7 @@ test("image upload uses multipart and remains visible after saving and reloading
 });
 
 test("upload failure exposes retry without inserting a broken image", async ({ page }) => {
-  await page.goto("/login"); await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.goto("/login"); await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click(); await page.getByTitle("新建笔记 (⌘N)").click();
   await expect(page.locator(".prose-editor")).toBeVisible();
   await page.route("**/api/attachments", route => route.abort("failed"));
@@ -41,7 +41,7 @@ test("upload failure exposes retry without inserting a broken image", async ({ p
 });
 
 for (const target of ["body", "table cell"] as const) test(`image-only clipboard pastes into ${target} and persists`, async ({ page }) => {
-  await page.goto("/login"); await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.goto("/login"); await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click(); await page.getByTitle("新建笔记 (⌘N)").click();
   const editor = page.locator(".prose-editor");
   if (target === "table cell") {
@@ -68,7 +68,7 @@ for (const target of ["body", "table cell"] as const) test(`image-only clipboard
 });
 
 test("clipboard files and copied private images paste without cross-note references", async ({ page }) => {
-  await page.goto("/login"); await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.goto("/login"); await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click(); await page.getByTitle("新建笔记 (⌘N)").click();
   const editor = page.locator(".prose-editor"); await editor.click();
   const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";

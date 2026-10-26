@@ -1,20 +1,22 @@
 import type { ContentNode } from "../../shared/dto";
+import { identity } from "./identity";
 
-export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3 | 4 | 5; editSequence: number; updatedAt: number; content: ContentNode };
+export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3 | 4 | 5; editSequence: number; updatedAt: number; content: ContentNode; legacy?: boolean };
 const DB_NAME = "uranus-drafts";
 const STORE = "drafts";
 
-function openDatabase(): Promise<IDBDatabase> {
+function openDatabase(userId: string | null, legacy = false): Promise<IDBDatabase> {
+  if (!userId) return Promise.reject(new Error("未登录，无法访问本机草稿"));
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(legacy ? DB_NAME : DB_NAME + "-v6:" + userId, 1);
     request.onupgradeneeded = () => request.result.createObjectStore(STORE, { keyPath: "noteId" });
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-export async function putDraft(draft: Draft): Promise<boolean> {
-  const db = await openDatabase();
+export async function putDraft(draft: Draft, userId = identity().userId): Promise<boolean> {
+  const db = await openDatabase(userId);
   let stored = false;
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
@@ -31,17 +33,17 @@ export async function putDraft(draft: Draft): Promise<boolean> {
   return stored;
 }
 
-export async function getDraft(noteId: number): Promise<Draft | undefined> {
-  const db = await openDatabase();
+export async function getDraft(noteId: number, userId = identity().userId, legacy = false): Promise<Draft | undefined> {
+  const db = await openDatabase(userId, legacy);
   return new Promise((resolve, reject) => {
     const request = db.transaction(STORE).objectStore(STORE).get(noteId);
-    request.onsuccess = () => { db.close(); resolve(request.result as Draft | undefined); };
+    request.onsuccess = () => { db.close(); resolve(request.result ? { ...request.result, legacy } as Draft : undefined); };
     request.onerror = () => { db.close(); reject(request.error); };
   });
 }
 
-export async function deleteDraftIfSequence(noteId: number, sequence: number): Promise<void> {
-  const db = await openDatabase();
+export async function deleteDraftIfSequence(noteId: number, sequence: number, userId = identity().userId, legacy = false): Promise<void> {
+  const db = await openDatabase(userId, legacy);
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     const store = tx.objectStore(STORE);
@@ -56,8 +58,8 @@ export async function deleteDraftIfSequence(noteId: number, sequence: number): P
   db.close();
 }
 
-export async function clearDrafts(): Promise<void> {
-  const db = await openDatabase();
+export async function clearDrafts(userId = identity().userId): Promise<void> {
+  const db = await openDatabase(userId);
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).clear();

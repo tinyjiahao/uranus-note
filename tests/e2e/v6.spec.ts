@@ -1,0 +1,35 @@
+import { test, expect } from "@playwright/test";
+import { testEmail, testPassword } from "./credentials";
+
+test.use({ trace: "off" });
+test("v6 local email login, owned notes, account settings and revocable logout", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/login");
+  await expect(page.getByLabel("邮箱", { exact: true })).toBeVisible();
+  await expect(page.getByText("访问令牌", { exact: true })).toHaveCount(0);
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail());
+  await page.getByLabel("密码", { exact: true }).fill(testPassword());
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.locator(".note-row").first()).toBeVisible();
+  const session = await page.request.get("/api/session");
+  const info = await session.json();
+  expect(info.authenticated).toBe(true);
+  expect(info.user.email.toLowerCase()).toBe(testEmail().toLowerCase());
+  const oldCookies = await page.context().cookies();
+  const cookie = oldCookies.find(item => item.name === "uranus_session");
+  expect(cookie?.httpOnly).toBe(true);
+  await page.locator(".note-row").first().click();
+  await expect(page.locator(".prose-editor")).toBeVisible();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByText("账号与安全", { exact: true }).click();
+  await expect(page.getByText("当前邮箱：" + info.user.email, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭设置" }).click();
+  await page.screenshot({ path: "test-results/v6-local-workspace.png" });
+  await page.getByTitle("退出", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
+  const revoked = await page.request.get("/api/notes", { headers: { Cookie: "uranus_session=" + cookie!.value } });
+  expect(revoked.status()).toBe(401);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: "test-results/v6-local-login.png" });
+});

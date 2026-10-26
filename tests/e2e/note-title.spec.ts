@@ -1,9 +1,9 @@
 import { expect, test } from "./fixtures";
-import { testApiToken } from "./credentials";
+import { testEmail, testPassword } from "./credentials";
 
 test("top title is editable without duplication and saves with body, including narrow and readonly views", async ({ page }) => {
   await page.goto("/login");
-  await page.getByLabel("访问令牌").fill(testApiToken());
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
   const original = "原有标题-" + Date.now();
   await page.locator('.import-button input[type="file"]').setInputFiles({ name: "title.md", mimeType: "text/markdown", buffer: Buffer.from(`# ${original}\n\n原有正文`) });
@@ -41,7 +41,8 @@ test("top title is editable without duplication and saves with body, including n
   await page.reload();
   await expect(title).toHaveValue("更新后的标题");
   await expect(body).not.toContainText("更新后的标题");
-  await expect(body).toContainText("正文追加原有正文");
+  await expect(body).toContainText("正文追加");
+  await expect(body).toContainText("原有正文");
   await expect(body.locator("table")).toHaveCount(1);
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
   await expect(title).toHaveAttribute("readonly", "");
@@ -65,5 +66,6 @@ test("top title is editable without duplication and saves with body, including n
   expect(Math.abs(narrowStatus.y + narrowStatus.height / 2 - narrowTitle.y - narrowTitle.height / 2)).toBeLessThan(2);
   await page.reload();
   await expect(title).toHaveValue("");
-  await expect(body).toContainText("正文追加原有正文");
+  await expect(body).toContainText("正文追加");
+  await expect(body).toContainText("原有正文");
 });

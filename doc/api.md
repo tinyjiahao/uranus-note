@@ -11,8 +11,12 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/session` | 会话状态和 CSRF token |
-| POST | `/api/session` | `{token}` 登录 |
-| DELETE | `/api/session` | 退出 |
+| POST | `/api/session` | `{email,password}` 登录（拒绝旧 token 字段） |
+| DELETE | `/api/session` | 撤销当前会话并清 Cookie |
+| POST | `/api/register` | `{email,username,password,confirmPassword}`，默认关闭，100 人硬上限 |
+| GET/PATCH | `/api/account` | 当前账号 / `{username}` 修改名称 |
+| POST | `/api/account/email` | `{email,currentPassword}`；成功撤销全部会话 |
+| POST | `/api/account/password` | `{currentPassword,password,confirmPassword}`；成功撤销全部会话 |
 | GET | `/api/health` | 匿名总体状态 |
 
 ## 文件夹与笔记
@@ -42,36 +46,6 @@
 
 附件只接受 PNG/JPEG/WebP/GIF，最大 10,000,000 字节；正文 JSON 最大 1,500,000 UTF-8 字节。
 
-## 维护
+## 用户级任务与运维
 
-`/api/maintenance/mode` 管理 `normal → draining → frozen` 备份状态，或空目标的 `normal → restoring → frozen` 恢复状态。`/api/maintenance/backup` 和 `/api/maintenance/restore` 供仓库脚本使用。任务状态通过 `/api/maintenance/jobs/:id` 查询，失败任务可 POST `retry`。
-
-维护 id 只关联作业，不是认证凭证。普通会话、Origin 和 CSRF 始终必需。
-# v2 增量
-
-- v2 初始正文版本为 `content_schema_version: 2`；后续段落对齐升级至 3，图片对齐及格内图片升级至 4。旧客户端向较新 schema 笔记写入返回 `409 CLIENT_UPDATE_REQUIRED`，需刷新页面，不能忽略新属性继续保存。
-- 表格属性：`widthMode: fluid|fixed`；单元格：`colwidth: [64..2000] | null`、`textAlign: left|center|right | null`、`verticalAlign: top|middle|bottom | null`。拒绝非有限数、任意 style 和合并单元格。
-- `GET /api/notes` 返回 `totalCount`；排序统一为置顶优先，标题排序空值末尾，同值 id 升序；分页参数必须为有效正整数，每页最多 100 条。
-- `GET /api/settings/status` 需会话鉴权，返回应用版本、配置完整性、D1 实际只读探测结果和 R2 已绑定但未探测的状态，不返回资源 ID 或 Secrets。
-- 网页换令牌 API 未开放，鉴权仍遵循 v1 的 Worker Secrets 方案。
-
-## v5 内容增量
-
-- schema 5 新增语义 `small` mark，以及表格单元格中的无序/有序/待办列表、引用和代码块；仍拒绝嵌套表格、合并单元格和任意 HTML。
-- `small` 不允许出现在标题、代码块或行内代码中。表格仍必须是矩形，每行单元格数量相同。
-- 跨笔记图片复制继续使用 `POST /api/attachments/:id/copy` 生成目标笔记专属附件；同笔记复制可复用原附件引用。
-- schema 5 对数据库约束的支持由追加迁移 `0006_content_v5.sql` 提供。部署 Worker 前先备份并执行迁移。
-
-## v3 搜索片段（可选响应扩展）
-
-有非空 `q` 的列表项增加 `searchMatch`，不传查询时省略：
-
-```json
-{"source":"body","text":"😀前abc后","ranges":[[2,5]],"normalized":true,"before":false,"after":true}
-```
-
-- 语义仍是 NFKC + 小写后的字面子串，标题命中优先，否则取正文首个命中；不引入相关性排序。
-- `text` 最多 200 个 Unicode 码点，`ranges` 是该文本的码点半开区间；不是 UTF-16 索引，不是原文位置。上例区间对应 `abc`。
-- `before/after` 表示两侧被截断，省略号由前端另行展示，不计入区间。前端按纯文本节点和 mark 渲染，不注入 HTML。
-- SQLite 只为当前返回页的 id 裁剪片段；响应不含完整规范化搜索正文或正文 JSON。现有鉴权、范围、置顶、稳定排序及分页不变。
-- 列表菜单仍使用原 PATCH/删除/恢复接口；修改正在编辑的笔记必须经已有串行保存队列，不新增旁路保存 API。
+GET /api/maintenance/jobs/:id 和 POST /api/maintenance/jobs/:id/retry 仅限当前用户任务。全库 mode/backup/restore/attachments 维护接口已移除，默认 admin 也没有全库权限。所有业务路径、列表、搜索、版本、附件和幂等回执按会话 user_id 授权；越权返回统一 404。

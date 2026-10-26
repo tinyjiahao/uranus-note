@@ -18,9 +18,10 @@ export type OperationRow = {
   result_code: string | null;
 };
 
-export async function existingOperation(db: D1Database, id: string, hash: string): Promise<OperationRow | null> {
-  const row = await db.prepare("SELECT operation_id, request_hash, status, result_id, result_revision, result_code FROM uranus_operations WHERE operation_id = ?").bind(id).first<OperationRow>();
+export async function existingOperation(db: D1Database, id: string, hash: string, userId: string | null = null): Promise<OperationRow | null> {
+  const row = await db.prepare("SELECT operation_id, request_hash, status, result_id, result_revision, result_code, user_id FROM uranus_operations WHERE operation_id = ?").bind(id).first<OperationRow & { user_id: string | null }>();
   if (!row) return null;
+  if (row.user_id !== userId) throw new ApiError(404, "OPERATION_NOT_FOUND", "操作不存在");
   if (row.request_hash !== hash) throw new ApiError(409, "OPERATION_PAYLOAD_MISMATCH", "operation_id 已用于不同请求");
   return row;
 }

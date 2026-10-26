@@ -1,2 +1,3 @@
-API_TOKEN="replace-with-at-least-32-random-bytes"
 SESSION_SECRET="replace-with-a-different-at-least-32-byte-secret"
+# Local controlled initialization only; never expose through VITE_*.
+ADMIN_INITIAL_PASSWORD="replace-with-your-own-strong-password"

@@ -2,12 +2,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { putDraft, deleteDraftIfSequence } from "../../src/state/drafts";
 import type { ContentNode } from "../../shared/dto";
 import { NoteSaveQueue } from "../../src/state/saveQueue";
+import { activateIdentity } from "../../src/state/identity";
 import { patchNote } from "../../src/api/client";
 import type { NoteDetail } from "../../shared/dto";
 
 vi.mock("../../src/api/client", () => ({ patchNote: vi.fn(), uuidv7: () => crypto.randomUUID() }));
 vi.mock("../../src/state/drafts", () => ({ deleteDraftIfSequence: vi.fn(async () => undefined), putDraft: vi.fn(async () => true) }));
 beforeEach(() => {
+  activateIdentity("queue-user");
   vi.useFakeTimers();
   vi.stubGlobal("window", { setTimeout, clearTimeout });
   vi.mocked(putDraft).mockResolvedValue(true);
@@ -15,6 +17,32 @@ beforeEach(() => {
 });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetAllMocks(); });
 const content = (text: string): ContentNode => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+
+it("an empty cleanup flush cannot immediately sync subsequent edits", async () => {
+  const queue = new NoteSaveQueue(1, 1, () => {});
+  const cleanup = queue.flush();
+  queue.enqueue({ content: content("typed after mount") });
+  await cleanup;
+  await vi.advanceTimersByTimeAsync(800);
+  expect(putDraft).toHaveBeenCalled();
+  expect(patchNote).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(29_200);
+  expect(patchNote).toHaveBeenCalledTimes(1);
+});
+
+it("stops old-account retries and retains its own draft after switching identities", async () => {
+  const report = vi.fn();
+  const queue = new NoteSaveQueue(1, 1, report);
+  queue.enqueue({ content: content("private A") });
+  activateIdentity("another-user");
+  queue.dispose();
+  report.mockClear();
+  await vi.advanceTimersByTimeAsync(60_000);
+  await queue.flush();
+  expect(patchNote).not.toHaveBeenCalled();
+  expect(putDraft).toHaveBeenCalledWith(expect.objectContaining({ noteId: 1 }), "queue-user");
+  expect(report).not.toHaveBeenCalled();
+});
 
 it("persists at 800ms but syncs at 30s without postponing on new input", async () => {
   const report = vi.fn();

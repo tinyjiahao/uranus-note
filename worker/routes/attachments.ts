@@ -19,11 +19,11 @@ attachmentRoutes.post("/", async (c) => {
   const noteId = Number(form.get("note_id"));
   const operationId = String(form.get("operation_id") ?? "");
   if (!(file instanceof File) || !Number.isSafeInteger(noteId) || noteId <= 0) throw new ApiError(400, "VALIDATION_ERROR", "上传字段无效");
-  return c.json(await uploadAttachment(c.env.DB, c.env.UPLOADS, noteId, operationId, file), 201);
+  return c.json(await uploadAttachment(c.env.DB, c.env.UPLOADS, noteId, operationId, file, c.get("accountSession")), 201);
 });
 
 attachmentRoutes.get("/:id", async (c) => {
-  const result = await downloadAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"), c.req.header("If-None-Match"));
+  const result = await downloadAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"), c.req.header("If-None-Match"), c.get("accountSession"));
   if (result.notModified) return new Response(null, { status: 304, headers: { "Cache-Control": "private, no-cache", ETag: result.row.etag ?? "" } });
   const headers = new Headers({
     "Content-Type": result.row.mime, "Content-Length": String(result.row.size),
@@ -34,9 +34,9 @@ attachmentRoutes.get("/:id", async (c) => {
   return new Response(result.object!.body, { headers });
 });
 
-attachmentRoutes.delete("/:id", async (c) => c.json(await deleteAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"))));
+attachmentRoutes.delete("/:id", async (c) => c.json(await deleteAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"), c.get("accountSession"))));
 attachmentRoutes.post("/:id/copy", async (c) => {
   const parsed = z.object({ target_note_id: z.number().int().positive(), operation_id: z.string().uuid() }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "复制附件请求无效");
-  return c.json(await copyAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"), parsed.data.target_note_id, parsed.data.operation_id), 201);
+  return c.json(await copyAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"), parsed.data.target_note_id, parsed.data.operation_id, c.get("accountSession")), 201);
 });

@@ -4,6 +4,8 @@ import { ApiError } from "../lib/http";
 import { randomSafeInteger, requestHash } from "../lib/crypto";
 import { existingOperation, validateOperationId } from "./operations";
 import { searchMatch } from "../../shared/searchMatch";
+import type { AccountSession } from "./accountSessions";
+import { businessWrite } from "./businessWrite";
 
 type NoteRow = {
   id: number; folder_id: number; title: string; snippet: string; content_json: string;
@@ -24,15 +26,15 @@ function detail(row: NoteRow): NoteDetail {
   return { ...listItem(row), content: JSON.parse(row.content_json) as ContentNode, contentSchemaVersion: row.content_schema_version as 1 | 2 | 3 | 4 | 5 };
 }
 
-export async function getNote(db: D1Database, id: number): Promise<NoteDetail> {
-  const row = await db.prepare("SELECT id, folder_id, title, snippet, content_json, content_schema_version, revision, pinned, starred, deleted_at, created_at, updated_at FROM uranus_notes WHERE id = ? AND purge_pending = 0").bind(id).first<NoteRow>();
+export async function getNote(db: D1Database, id: number, session?: AccountSession): Promise<NoteDetail> {
+  const row = await db.prepare("SELECT id, folder_id, title, snippet, content_json, content_schema_version, revision, pinned, starred, deleted_at, created_at, updated_at FROM uranus_notes WHERE id = ? AND user_id IS ? AND purge_pending = 0").bind(id, session?.user.id ?? null).first<NoteRow>();
   if (!row) throw new ApiError(404, "NOTE_NOT_FOUND", "笔记不存在");
   return detail(row);
 }
 
 export type ListOptions = { folderId?: number | undefined; starred?: boolean | undefined; deleted?: boolean | undefined; q?: string | undefined; sortBy?: string | undefined; sortDir?: string | undefined; page?: number | undefined; pageSize?: number | undefined };
 
-export async function listNotes(db: D1Database, options: ListOptions): Promise<PageDto<NoteListItem>> {
+export async function listNotes(db: D1Database, options: ListOptions, session?: AccountSession): Promise<PageDto<NoteListItem>> {
   const page = options.page ?? 1;
   const pageSize = options.pageSize ?? 50;
   if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new ApiError(400, "INVALID_PAGE", "分页参数无效");
@@ -41,8 +43,11 @@ export async function listNotes(db: D1Database, options: ListOptions): Promise<P
   if (!sortBy) throw new ApiError(400, "INVALID_SORT", "不支持的排序字段");
   const direction = (options.sortDir ?? "desc").toLowerCase();
   if (direction !== "asc" && direction !== "desc") throw new ApiError(400, "INVALID_SORT", "不支持的排序方向");
-  const where = ["n.purge_pending = 0", options.deleted ? "n.deleted_at IS NOT NULL" : "n.deleted_at IS NULL"];
-  const bindings: unknown[] = [];
+  const where = ["n.user_id IS ?", "n.purge_pending = 0", options.deleted ? "n.deleted_at IS NOT NULL" : "n.deleted_at IS NULL"];
+  const bindings: unknown[] = [session?.user.id ?? null];
+  if (options.folderId !== undefined && !await db.prepare("SELECT id FROM uranus_folders WHERE id=? AND user_id IS ?").bind(options.folderId, session?.user.id ?? null).first()) {
+    throw new ApiError(404, "FOLDER_NOT_FOUND", "文件夹不存在");
+  }
   if (options.folderId !== undefined) { where.push("n.folder_id = ?"); bindings.push(options.folderId); }
   if (options.starred) where.push("n.starred = 1");
   let join = "";
@@ -83,31 +88,32 @@ export async function listNotes(db: D1Database, options: ListOptions): Promise<P
 
 type CreateInput = { operation_id: string; folder_id?: number | undefined; content_schema_version: 1 | 2 | 3 | 4 | 5; content?: Record<string, unknown> | undefined };
 
-export async function createNote(db: D1Database, input: CreateInput) {
+export async function createNote(db: D1Database, input: CreateInput, session?: AccountSession) {
   validateOperationId(input.operation_id);
   const hash = await requestHash("POST", "/api/notes", input);
-  const existing = await existingOperation(db, input.operation_id, hash);
+  const existing = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
   if (existing) {
-    if (existing.status === "succeeded" && existing.result_id) return getNote(db, Number(existing.result_id));
+    if (existing.status === "succeeded" && existing.result_id) return getNote(db, Number(existing.result_id), session);
     throw new ApiError(existing.status === "pending" ? 202 : 409, existing.result_code ?? "OPERATION_PENDING", existing.status === "pending" ? "操作仍在进行" : "操作已失败");
   }
   const folder = input.folder_id === undefined
-    ? await db.prepare("SELECT id FROM uranus_folders WHERE system_key = 'default'").first<{ id: number }>()
-    : await db.prepare("SELECT id FROM uranus_folders WHERE id = ?").bind(input.folder_id).first<{ id: number }>();
+    ? await db.prepare("SELECT id FROM uranus_folders WHERE system_key = 'default' AND user_id IS ?").bind(session?.user.id ?? null).first<{ id: number }>()
+    : await db.prepare("SELECT id FROM uranus_folders WHERE id = ? AND user_id IS ?").bind(input.folder_id, session?.user.id ?? null).first<{ id: number }>();
   if (!folder) throw new ApiError(404, "FOLDER_NOT_FOUND", "文件夹不存在");
   const derived = validateAndDeriveContent(input.content ?? EMPTY_CONTENT, input.content_schema_version);
+  if (derived.attachmentIds.length) throw new ApiError(400, "INVALID_ATTACHMENT", "新笔记不能引用已有笔记的附件，请创建后复制附件");
   const id = randomSafeInteger();
   const now = Date.now();
-  await db.batch([
-    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'note.create', ?, 'pending', ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000),
-    db.prepare("INSERT INTO uranus_notes(id, folder_id, title, snippet, content_json, content_schema_version, revision, last_operation_id, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode = 'normal')").bind(id, folder.id, derived.title, derived.snippet, derived.serialized, input.content_schema_version, input.operation_id, now, now),
+  await businessWrite(db, session, [
+    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'note.create', ?, 'pending', ?, ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000, session?.user.id ?? null),
+    db.prepare("INSERT INTO uranus_notes(id, folder_id, title, snippet, content_json, content_schema_version, revision, last_operation_id, created_at, updated_at, user_id) SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode = 'normal')").bind(id, folder.id, derived.title, derived.snippet, derived.serialized, input.content_schema_version, input.operation_id, now, now, session?.user.id ?? null),
     db.prepare("INSERT INTO uranus_note_search(note_id, normalized_title, normalized_text, source_revision) SELECT id, ?, ?, 1 FROM uranus_notes WHERE id = ? AND last_operation_id = ?").bind(derived.normalizedTitle, derived.normalizedText, id, input.operation_id),
     db.prepare("UPDATE uranus_operations SET status = 'succeeded', result_id = ?, result_revision = 1 WHERE operation_id = ? AND EXISTS (SELECT 1 FROM uranus_notes WHERE id = ? AND last_operation_id = ?)").bind(String(id), input.operation_id, id, input.operation_id),
     db.prepare("UPDATE uranus_operations SET status = 'failed', result_code = 'MAINTENANCE_MODE' WHERE operation_id = ? AND status = 'pending'").bind(input.operation_id),
   ]);
-  const operation = await existingOperation(db, input.operation_id, hash);
+  const operation = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
   if (operation?.status !== "succeeded") throw new ApiError(503, operation?.result_code ?? "WRITE_FAILED", "维护期间暂停写入");
-  return getNote(db, id);
+  return getNote(db, id, session);
 }
 
 export type PatchInput = {
@@ -115,20 +121,20 @@ export type PatchInput = {
   folder_id?: number | undefined; pinned?: boolean | undefined; starred?: boolean | undefined;
 };
 
-export async function patchNote(db: D1Database, id: number, input: PatchInput) {
+export async function patchNote(db: D1Database, id: number, input: PatchInput, session?: AccountSession) {
   validateOperationId(input.operation_id);
   const hash = await requestHash("PATCH", `/api/notes/${id}`, input);
-  const replay = await existingOperation(db, input.operation_id, hash);
+  const replay = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
   if (replay) {
-    if (replay.status === "succeeded") return { note: await getNote(db, id), operation_id: input.operation_id, applied_revision: replay.result_revision };
+    if (replay.status === "succeeded") return { note: await getNote(db, id, session), operation_id: input.operation_id, applied_revision: replay.result_revision };
     if (replay.status === "pending") throw new ApiError(202, "OPERATION_PENDING", "操作仍在进行");
-    throw new ApiError(409, replay.result_code ?? "REVISION_CONFLICT", "该操作此前已失败", { latest: await getNote(db, id) });
+    throw new ApiError(409, replay.result_code ?? "REVISION_CONFLICT", "该操作此前已失败", { latest: await getNote(db, id, session) });
   }
-  const current = await getNote(db, id);
+  const current = await getNote(db, id, session);
   if (current.contentSchemaVersion > (input.content_schema_version ?? 1)) throw new ApiError(409, "CLIENT_UPDATE_REQUIRED", "此笔记使用新版格式，请刷新页面后重试");
   if (current.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "请先恢复笔记再编辑");
   if (input.folder_id !== undefined) {
-    const folder = await db.prepare("SELECT id FROM uranus_folders WHERE id = ?").bind(input.folder_id).first();
+    const folder = await db.prepare("SELECT id FROM uranus_folders WHERE id = ? AND user_id IS ?").bind(input.folder_id, session?.user.id ?? null).first();
     if (!folder) throw new ApiError(404, "FOLDER_NOT_FOUND", "目标文件夹不存在");
   }
   const content = input.content ?? current.content as Record<string, unknown>;
@@ -152,8 +158,8 @@ export async function patchNote(db: D1Database, id: number, input: PatchInput) {
   const updateBindings: unknown[] = [folderId, derived.title, derived.snippet, derived.serialized, Math.max(2, input.content_schema_version ?? current.contentSchemaVersion), revision, pinned ? 1 : 0, starred ? 1 : 0, input.operation_id, now, id, input.expected_revision];
   if (attachmentIds.length) updateBindings.push(id, ...attachmentIds, attachmentIds.length);
   const statements = [
-    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'note.patch', ?, 'pending', ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000),
-    db.prepare(`UPDATE uranus_notes SET folder_id = ?, title = ?, snippet = ?, content_json = ?, content_schema_version = ?, revision = ?, pinned = ?, starred = ?, last_operation_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL AND purge_pending = 0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode = 'normal')${attachmentGuard}`).bind(...updateBindings),
+    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'note.patch', ?, 'pending', ?, ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000, session?.user.id ?? null),
+    db.prepare(`UPDATE uranus_notes SET folder_id = ?, title = ?, snippet = ?, content_json = ?, content_schema_version = ?, revision = ?, pinned = ?, starred = ?, last_operation_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL AND purge_pending = 0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode = 'normal')${attachmentGuard} AND user_id IS ?`).bind(...updateBindings, session?.user.id ?? null),
     db.prepare("INSERT INTO uranus_note_search(note_id, normalized_title, normalized_text, source_revision) SELECT id, ?, ?, revision FROM uranus_notes WHERE id = ? AND last_operation_id = ? ON CONFLICT(note_id) DO UPDATE SET normalized_title = excluded.normalized_title, normalized_text = excluded.normalized_text, source_revision = excluded.source_revision").bind(derived.normalizedTitle, derived.normalizedText, id, input.operation_id),
   ];
   if (contentChanged) {
@@ -175,31 +181,31 @@ export async function patchNote(db: D1Database, id: number, input: PatchInput) {
     db.prepare("UPDATE uranus_operations SET status = 'succeeded', result_id = ?, result_revision = ? WHERE operation_id = ? AND EXISTS (SELECT 1 FROM uranus_notes WHERE id = ? AND last_operation_id = ?)").bind(String(id), revision, input.operation_id, id, input.operation_id),
     db.prepare("UPDATE uranus_operations SET status = 'failed', result_code = CASE WHEN EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id = 1 AND mode <> 'normal') THEN 'MAINTENANCE_MODE' ELSE 'REVISION_CONFLICT' END WHERE operation_id = ? AND status = 'pending'").bind(input.operation_id),
   );
-  await db.batch(statements);
-  const operation = await existingOperation(db, input.operation_id, hash);
+  await businessWrite(db, session, statements);
+  const operation = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
   if (operation?.status !== "succeeded") {
     if (operation?.result_code === "MAINTENANCE_MODE") throw new ApiError(503, "MAINTENANCE_MODE", "维护期间暂停写入");
-    throw new ApiError(409, "REVISION_CONFLICT", "笔记已在其他位置更新", { latest: await getNote(db, id) });
+    throw new ApiError(409, "REVISION_CONFLICT", "笔记已在其他位置更新", { latest: await getNote(db, id, session) });
   }
-  return { note: await getNote(db, id), operation_id: input.operation_id, applied_revision: revision };
+  return { note: await getNote(db, id, session), operation_id: input.operation_id, applied_revision: revision };
 }
 
-export async function changeDeletedState(db: D1Database, id: number, input: { operation_id: string; expected_revision: number }, restore: boolean) {
+export async function changeDeletedState(db: D1Database, id: number, input: { operation_id: string; expected_revision: number }, restore: boolean, session?: AccountSession) {
   validateOperationId(input.operation_id);
   const path = restore ? `/api/notes/${id}/restore` : `/api/notes/${id}`;
   const hash = await requestHash(restore ? "POST" : "DELETE", path, input);
-  const replay = await existingOperation(db, input.operation_id, hash);
-  if (replay?.status === "succeeded") return getNote(db, id);
+  const replay = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
+  if (replay?.status === "succeeded") return getNote(db, id, session);
   if (replay) throw new ApiError(replay.status === "pending" ? 202 : 409, replay.result_code ?? "OPERATION_PENDING", "操作未完成");
-  const current = await getNote(db, id);
+  const current = await getNote(db, id, session);
   const now = Date.now();
   const revision = input.expected_revision + 1;
-  const defaultFolder = restore ? await db.prepare("SELECT id FROM uranus_folders WHERE system_key = 'default'").first<{ id: number }>() : null;
+  const defaultFolder = restore ? await db.prepare("SELECT id FROM uranus_folders WHERE system_key = 'default' AND user_id IS ?").bind(session?.user.id ?? null).first<{ id: number }>() : null;
   const targetFolder = restore
     ? ((await db.prepare("SELECT f.id FROM uranus_notes n JOIN uranus_folders f ON f.id = n.prev_folder_id WHERE n.id = ?").bind(id).first<{ id: number }>())?.id ?? defaultFolder?.id)
     : current.folderId;
-  await db.batch([
-    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, ?, ?, 'pending', ?, ?)").bind(input.operation_id, restore ? "note.restore" : "note.delete", hash, now, now + 604_800_000),
+  await businessWrite(db, session, [
+    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, ?, ?, 'pending', ?, ?, ?)").bind(input.operation_id, restore ? "note.restore" : "note.delete", hash, now, now + 604_800_000, session?.user.id ?? null),
     restore
       ? db.prepare("UPDATE uranus_notes SET folder_id = ?, prev_folder_id = NULL, deleted_at = NULL, revision = ?, last_operation_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NOT NULL AND purge_pending = 0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(targetFolder, revision, input.operation_id, now, id, input.expected_revision)
       : db.prepare("UPDATE uranus_notes SET prev_folder_id = folder_id, deleted_at = ?, revision = ?, last_operation_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL AND purge_pending = 0 AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(now, revision, input.operation_id, now, id, input.expected_revision),
@@ -207,39 +213,40 @@ export async function changeDeletedState(db: D1Database, id: number, input: { op
     db.prepare("UPDATE uranus_operations SET status='succeeded', result_id=?, result_revision=? WHERE operation_id=? AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(String(id), revision, input.operation_id, id, input.operation_id),
     db.prepare("UPDATE uranus_operations SET status='failed', result_code='REVISION_CONFLICT' WHERE operation_id=? AND status='pending'").bind(input.operation_id),
   ]);
-  const operation = await existingOperation(db, input.operation_id, hash);
-  if (operation?.status !== "succeeded") throw new ApiError(409, "REVISION_CONFLICT", "笔记已在其他位置更新", { latest: await getNote(db, id) });
-  return getNote(db, id);
+  const operation = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
+  if (operation?.status !== "succeeded") throw new ApiError(409, "REVISION_CONFLICT", "笔记已在其他位置更新", { latest: await getNote(db, id, session) });
+  return getNote(db, id, session);
 }
 
-export async function listVersions(db: D1Database, noteId: number, page: number, pageSize: number) {
-  await getNote(db, noteId);
+export async function listVersions(db: D1Database, noteId: number, page: number, pageSize: number, session?: AccountSession) {
+  await getNote(db, noteId, session);
   const safePage = Math.max(1, page);
   const safeSize = Math.min(100, Math.max(1, pageSize));
   const result = await db.prepare("SELECT id, note_id, content_schema_version, title, char_count, source_revision, created_at FROM uranus_note_versions WHERE note_id = ? ORDER BY id DESC LIMIT ? OFFSET ?").bind(noteId, safeSize + 1, (safePage - 1) * safeSize).all();
   return { items: result.results.slice(0, safeSize), page: safePage, pageSize: safeSize, hasMore: result.results.length > safeSize };
 }
 
-export async function getVersion(db: D1Database, noteId: number, versionId: number) {
+export async function getVersion(db: D1Database, noteId: number, versionId: number, session?: AccountSession) {
+  await getNote(db, noteId, session);
   const row = await db.prepare("SELECT id, note_id, content_json, content_schema_version, title, char_count, source_revision, created_at FROM uranus_note_versions WHERE id = ? AND note_id = ?").bind(versionId, noteId).first<Record<string, unknown>>();
   if (!row) throw new ApiError(404, "VERSION_NOT_FOUND", "版本不存在");
   if (![1, 2, 3, 4, 5].includes(Number(row.content_schema_version))) throw new ApiError(400, "UNSUPPORTED_CONTENT_SCHEMA", "历史正文版本不受支持");
   return { ...row, id: Number(row.id), content: JSON.parse(String(row.content_json)), content_json: undefined };
 }
 
-export async function createManualVersion(db: D1Database, noteId: number, operationId: string) {
+export async function createManualVersion(db: D1Database, noteId: number, operationId: string, session?: AccountSession) {
   validateOperationId(operationId);
   const hash = await requestHash("POST", `/api/notes/${noteId}/versions`, { operation_id: operationId });
-  const replay = await existingOperation(db, operationId, hash);
-  if (replay?.status === "succeeded" && replay.result_id) return getVersion(db, noteId, Number(replay.result_id));
+  const replay = await existingOperation(db, operationId, hash, session?.user.id ?? null);
+  if (replay?.status === "succeeded" && replay.result_id) return getVersion(db, noteId, Number(replay.result_id), session);
   if (replay) throw new ApiError(replay.status === "pending" ? 202 : 409, replay.result_code ?? "VERSION_FAILED", "版本操作未完成");
-  const note = await getNote(db, noteId);
+  const note = await getNote(db, noteId, session);
   if (note.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "回收站中的笔记不能创建版本");
   const derived = validateAndDeriveContent(note.content);
   const latest = await db.prepare("SELECT id, content_json FROM uranus_note_versions WHERE note_id=? ORDER BY id DESC LIMIT 1").bind(noteId).first<{ id: number; content_json: string }>();
   const versionId = latest?.content_json === derived.serialized ? latest.id : randomSafeInteger();
   const now = Date.now();
-  const statements = [db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'version.create', ?, 'pending', ?, ?)").bind(operationId, hash, now, now + 604_800_000)];
+  const statements = [db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'version.create', ?, 'pending', ?, ?, ?)").bind(operationId, hash, now, now + 604_800_000, session?.user.id ?? null)];
   if (latest?.content_json !== derived.serialized) {
     statements.push(db.prepare("INSERT INTO uranus_note_versions(id, note_id, content_json, content_schema_v1, content_schema_version, title, char_count, source_revision, created_at) SELECT ?, id, content_json, 1, content_schema_version, title, ?, revision, ? FROM uranus_notes WHERE id=? AND revision=? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(versionId, derived.charCount, now, noteId, note.revision));
     for (const attachmentId of derived.attachmentIds) statements.push(db.prepare("INSERT INTO uranus_attachment_refs(attachment_id, note_id, version_id) SELECT ?, ?, id FROM uranus_note_versions WHERE id=? ON CONFLICT DO NOTHING").bind(attachmentId, noteId, versionId));
@@ -249,19 +256,19 @@ export async function createManualVersion(db: D1Database, noteId: number, operat
     db.prepare("UPDATE uranus_operations SET status='succeeded', result_id=?, result_revision=? WHERE operation_id=? AND EXISTS (SELECT 1 FROM uranus_note_versions WHERE id=?)").bind(String(versionId), note.revision, operationId, versionId),
     db.prepare("UPDATE uranus_operations SET status='failed', result_code='VERSION_FAILED' WHERE operation_id=? AND status='pending'").bind(operationId),
   );
-  await db.batch(statements);
-  const operation = await existingOperation(db, operationId, hash);
+  await businessWrite(db, session, statements);
+  const operation = await existingOperation(db, operationId, hash, session?.user.id ?? null);
   if (operation?.status !== "succeeded") throw new ApiError(409, "VERSION_FAILED", "创建版本失败，笔记可能已发生变化");
-  return getVersion(db, noteId, versionId);
+  return getVersion(db, noteId, versionId, session);
 }
 
-export async function restoreVersion(db: D1Database, noteId: number, versionId: number, input: { operation_id: string; expected_revision: number }) {
+export async function restoreVersion(db: D1Database, noteId: number, versionId: number, input: { operation_id: string; expected_revision: number }, session?: AccountSession) {
   validateOperationId(input.operation_id);
   const hash = await requestHash("POST", `/api/notes/${noteId}/versions/${versionId}/restore`, input);
-  const replay = await existingOperation(db, input.operation_id, hash);
-  if (replay?.status === "succeeded") return getNote(db, noteId);
+  const replay = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
+  if (replay?.status === "succeeded") return getNote(db, noteId, session);
   if (replay) throw new ApiError(replay.status === "pending" ? 202 : 409, replay.result_code ?? "RESTORE_FAILED", "恢复操作未完成");
-  const current = await getNote(db, noteId);
+  const current = await getNote(db, noteId, session);
   if (current.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "请先恢复笔记");
   const versionRow = await db.prepare("SELECT content_json, content_schema_version FROM uranus_note_versions WHERE id=? AND note_id=?").bind(versionId, noteId).first<{ content_json: string; content_schema_version: number }>();
   if (!versionRow) throw new ApiError(404, "VERSION_NOT_FOUND", "版本不存在");
@@ -275,7 +282,7 @@ export async function restoreVersion(db: D1Database, noteId: number, versionId: 
   const backupId = randomSafeInteger();
   const now = Date.now();
   const statements = [
-    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at) VALUES (?, 'version.restore', ?, 'pending', ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000),
+    db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'version.restore', ?, 'pending', ?, ?, ?)").bind(input.operation_id, hash, now, now + 604_800_000, session?.user.id ?? null),
   ];
   if (!same) {
     statements.push(db.prepare("INSERT INTO uranus_note_versions(id, note_id, content_json, content_schema_v1, content_schema_version, title, char_count, source_revision, created_at) SELECT ?, id, content_json, 1, content_schema_version, title, ?, revision, ? FROM uranus_notes WHERE id=? AND revision=? AND deleted_at IS NULL").bind(backupId, currentDerived.charCount, now, noteId, input.expected_revision));
@@ -294,8 +301,8 @@ export async function restoreVersion(db: D1Database, noteId: number, versionId: 
       : db.prepare("UPDATE uranus_operations SET status='succeeded', result_id=?, result_revision=? WHERE operation_id=? AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(String(noteId), newRevision, input.operation_id, noteId, input.operation_id),
     db.prepare("UPDATE uranus_operations SET status='failed', result_code='REVISION_CONFLICT' WHERE operation_id=? AND status='pending'").bind(input.operation_id),
   );
-  await db.batch(statements);
-  const operation = await existingOperation(db, input.operation_id, hash);
-  if (operation?.status !== "succeeded") throw new ApiError(409, "REVISION_CONFLICT", "笔记已在其他位置更新", { latest: await getNote(db, noteId) });
-  return getNote(db, noteId);
+  await businessWrite(db, session, statements);
+  const operation = await existingOperation(db, input.operation_id, hash, session?.user.id ?? null);
+  if (operation?.status !== "succeeded") throw new ApiError(409, "REVISION_CONFLICT", "笔记已在其他位置更新", { latest: await getNote(db, noteId, session) });
+  return getNote(db, noteId, session);
 }

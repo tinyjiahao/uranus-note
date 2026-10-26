@@ -9,7 +9,6 @@ export default defineConfig({
         d1Databases: { UPGRADE_DB: "uranus-v2-upgrade-test" },
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations("./migrations/d1"),
-          API_TOKEN: "test-api-token-at-least-thirty-two-bytes-long",
           SESSION_SECRET: "test-session-secret-at-least-thirty-two-bytes-long",
           APP_ENV: "development",
           APP_ORIGIN: "http://uranus.test",

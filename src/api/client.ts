@@ -1,4 +1,6 @@
 import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, PageDto } from "../../shared/dto";
+import type { AccountIdentity } from "../../shared/account";
+import { activateIdentity, identity, identityMatches, lockIdentity, notifyAccountChange, trackRequest } from "../state/identity";
 
 let csrfToken = "";
 export const setCsrfToken = (value: string) => { csrfToken = value; };
@@ -8,32 +10,47 @@ export class ApiClientError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const expected = identity();
+  if (!expected.userId && !["/api/session", "/api/register"].includes(path)) throw new ApiClientError(401, "UNAUTHENTICATED", "请重新登录");
+  const controller = new AbortController();
+  const untrack = trackRequest(controller);
   const headers = new Headers(init.headers);
   // FormData needs fetch's multipart boundary; never label binary uploads as JSON.
   if (typeof init.body === "string" && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (init.method && !["GET", "HEAD"].includes(init.method.toUpperCase()) && csrfToken) headers.set("X-CSRF-Token", csrfToken);
-  const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
+  try {
+  const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal });
   const body = await response.json().catch(() => ({})) as T | ApiErrorBody;
+  if (!identityMatches(expected)) throw new ApiClientError(401, "IDENTITY_CHANGED", "账号状态已变化");
   if (!response.ok) {
-    if (response.status === 401 && path !== "/api/session") window.dispatchEvent(new Event("uranus-session-expired"));
+    if (response.status === 401 && (path !== "/api/session" || init.method === "DELETE")) lockIdentity();
     const error = body as ApiErrorBody;
     throw new ApiClientError(response.status, error.error?.code ?? "HTTP_ERROR", error.error?.message ?? `请求失败 (${response.status})`, error);
   }
   return body as T;
+  } finally { untrack(); }
 }
 
-export type Session = { authenticated: boolean; csrfToken?: string; expiresAt?: number };
+export type Session = { authenticated: boolean; csrfToken?: string; expiresAt?: number; user?: AccountIdentity; defaultDataOwner?: boolean; registrationEnabled?: boolean };
 export async function getSession(): Promise<Session> {
   const session = await request<Session>("/api/session");
   setCsrfToken(session.csrfToken ?? "");
+  activateIdentity(session.authenticated ? session.user?.id ?? null : null);
   return session;
 }
-export async function login(token: string): Promise<Session> {
-  const session = await request<Session>("/api/session", { method: "POST", body: JSON.stringify({ token }) });
+export async function login(email: string, password: string): Promise<Session> {
+  const session = await request<Session>("/api/session", { method: "POST", body: JSON.stringify({ email, password }) });
   setCsrfToken(session.csrfToken ?? "");
+  activateIdentity(session.user?.id ?? null); notifyAccountChange();
   return session;
 }
-export const logout = () => request<Session>("/api/session", { method: "DELETE" });
+export async function logout() { const result = await request<Session>("/api/session", { method: "DELETE" }); setCsrfToken(""); lockIdentity(true); return result; }
+export const register = (input: unknown) => request<{ registered: boolean; email: string }>("/api/register", { method: "POST", body: JSON.stringify(input) });
+export const getAccount = () => request<AccountIdentity>("/api/account");
+export const renameAccount = (username: string) => request<AccountIdentity>("/api/account", { method: "PATCH", body: JSON.stringify({ username }) });
+export async function changeEmail(input: unknown) { const result = await request<{ changed: boolean }>("/api/account/email", { method: "POST", body: JSON.stringify(input) }); if (result.changed) lockIdentity(true); return result; }
+export async function changePassword(input: unknown) { const result = await request("/api/account/password", { method: "POST", body: JSON.stringify(input) }); lockIdentity(true); return result; }
+export const deploymentStatus = () => request<{ version: string; configured: boolean }>("/api/settings/status");
 
 export const listFolders = () => request<FolderDto[]>("/api/folders");
 export const createFolder = (name: string) => request<FolderDto>("/api/folders", { method: "POST", body: JSON.stringify({ name }) });
