@@ -390,3 +390,7 @@ v4 安装体验只验收了 macOS Chrome；当前在 iOS Safari 上存在已确�
 - 颜色面板专项覆盖文本色/突出显示组合、HTML 往返、保存刷新、独立清除及深浅主题定位。最终将三个按钮反向统一为灰色后的检查为类型检查和 `git diff --check`；未将此前黄色版本的浏览器检查冒充为灰色版本重新验收。
 - 表格行号/间距、空选择状态、账号与设置表单等已做对应增量验证，详细测试入口见 `tests/e2e/v5.spec.ts`、`empty-selection.spec.ts`、`workspace-menu.spec.ts`、`paragraph-styles.spec.ts`、`toolbar-more.spec.ts`、`text-colors.spec.ts`、`label-clipboard.spec.ts`。
 - 尚未完成的真实中文/日文 IME、真实 iOS、打印分页人工验收继续保留；历史套件中的超时/环境限制见 [implementation-v7.md](implementation-v7.md)。本节不表示全量测试全绿、已推送 GitHub 或已部署生产。
+
+### 20.7 发布状态（2026-10-28）
+
+用户授权后已完成全部改动提交、GitHub main 推送、生产加密备份、0010 迁移、Cloudflare 发布和解除维护冻结。部署版本为 `4b6af7b5-c6ea-4a21-9548-af7d7cf6db7f`，代码提交为 `8dd0df2`；实际验证、首轮测试失败及复跑记录、未完成的人工验收见 [implementation-v7.md §9](implementation-v7.md#9-v7-github-推送与生产发布2026-10-28)。本节覆盖前文各开发阶段“未部署”的历史说明。
