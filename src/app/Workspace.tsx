@@ -1,14 +1,21 @@
+import { supportsSchema } from "../../shared/schemaVersion";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { History, ChevronLeft, FilePlus2, Folder, FolderPlus, LayoutPanelLeft, List, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pin, Search, Settings as SettingsIcon, Star, Sun, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import type { NoteDetail, NoteListItem } from "../../shared/dto";
+import { SaveSignals } from "../state/saveSignals";
+import { SaveFeedback } from "../components/SaveFeedback";
+import { toMarkdown, safeFileName } from "../../shared/markdownExport";
+import { ExportPopup } from "../components/ExportPopup";
+import { AccountSwitcher } from "../components/AccountSwitcher";
+import { getSession, login, switchAccount } from "../api/client";
 import { Popup, closePopups, pointAnchor, type PopupAnchor } from "../components/Popup";
 import { patchNote, type NotePatch } from "../api/client";
 import { createFolder, createNote, createNoteWithContent, deleteFolder, emptyTrash, getNote, hardDeleteNote, importMarkdown, listFolders, listNotes, logout, removeNote, renameFolder, restoreNote, type ApiClientError, type NoteFilters } from "../api/client";
 import { clearDrafts, deleteDraftIfSequence, getDraft, type Draft } from "../state/drafts";
-import { NoteSaveQueue, type SaveStatus, type SaveInfo } from "../state/saveQueue";
-import { activateIdentity } from "../state/identity";
+import { NoteSaveQueue } from "../state/saveQueue";
+import { activateIdentity, notifyAccountChange } from "../state/identity";
 import { noteTime, useUiStore } from "../state/ui";
 import { Settings, SortControls } from "../components/Settings";
 import { NoteEditor } from "../components/editor/NoteEditor";
@@ -16,17 +23,20 @@ import { VersionPanel } from "../components/VersionPanel";
 import { validateAndDeriveContent } from "../../shared/content";
 import { getMaintenanceJob, retryMaintenanceJob } from "../api/client";
 
-type Scope = { kind: "all" | "starred" | "trash" | "folder"; folderId?: number };
-const statusText: Record<SaveStatus, string> = { idle: "已保存", dirty: "未保存", saving: "正在保存…", saved: "已保存到服务器", error: "未同步", conflict: "发现编辑冲突" };
+type Scope = { kind: "none" | "all" | "starred" | "trash" | "folder"; folderId?: number };
 
 export function Workspace({ user, defaultDataOwner }: { user: import("../../shared/account").AccountIdentity; defaultDataOwner: boolean }) {
   const params = useParams();
   const selectedId = params.id ? Number(params.id) : undefined;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { layout, setLayout, theme, setTheme, sort, syncIntervalSeconds } = useUiStore();
+  const { layout: preferredLayout, setLayout, theme, setTheme, sort, syncIntervalSeconds } = useUiStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [noteMenu, setNoteMenu] = useState<{ note: NoteListItem; anchor: PopupAnchor } | null>(null);
+  const [noteMenu, setNoteMenu] = useState<{ note: NoteListItem; anchor: PopupAnchor; workspace?: boolean } | null>(null);
+  const [appMenu, setAppMenu] = useState<HTMLElement | null>(null);
+  const [accountMenu, setAccountMenu] = useState<PopupAnchor | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [exportNote, setExportNote] = useState<{ noteId: number; folderId: number; anchor: PopupAnchor } | null>(null);
   const [moveMenu, setMoveMenu] = useState(false);
   const [menuBusy, setMenuBusy] = useState(false);
   const undoReturnId = useRef<number | null>(null);
@@ -37,14 +47,11 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
   useEffect(() => { if (job.data?.status === "succeeded") { setNotice("永久删除任务已完成"); void queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"] }); } else if (job.data?.status === "failed") setNotice("删除任务失败，可重试；未完成的资源保留在后台任务中"); }, [job.data?.status, queryClient]);
   const listRef = useRef<HTMLDivElement>(null);
   const listPositions = useRef(new Map<string, { id: string; offset: number; scrollTop: number }>());
-  const [scope, setScope] = useState<Scope>({ kind: "all" });
+  const [scope, setScope] = useState<Scope>({ kind: "none" });
+  const layout = scope.kind === "none" && !selectedId ? "three" : preferredLayout;
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const [saveError, setSaveError] = useState("");
-  const [saveInfo, setSaveInfo] = useState<SaveInfo>({ localSaved: false });
-  const localSaveText = saveInfo.localSaved ? "已存本机 · 待同步" : saveInfo.localError ? "本机暂存失败 · 待同步" : "正在暂存本机…";
-  const [uploading, setUploading] = useState(false);
+  const [saveSignals] = useState(() => new SaveSignals());
   const [copyText, setCopyText] = useState("");
   const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId;
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -74,13 +81,40 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
       await logout();
     } catch (error) { setLogoutError((error as Error).message); }
   };
+  const confirmSwitchedAccount = async () => {
+    try {
+      const session = await getSession();
+      notifyAccountChange();
+      await queryClient.cancelQueries();
+      queryClient.clear();
+      queryClient.setQueryData(["session"], session);
+      navigate(session.authenticated ? "/" : "/login", { replace: true });
+      // Switching back to the same user may keep this Workspace mounted.
+      queues.current.clear(); setLocked(false); setSwitching(false); setAccountMenu(null); setLogoutError("");
+    } catch (error) { setLogoutError((error as Error).message); }
+  };
+  const changeAccount = async (target: { userId: string; switchToken: string } | { email: string; password: string }) => {
+    await beforeSensitiveChange();
+    for (const queue of queues.current.values()) queue.dispose();
+    activateIdentity(null); setSwitching(true); setLocked(true); setLogoutError("");
+    await queryClient.cancelQueries();
+    try {
+      if ("userId" in target) await switchAccount(target.userId, target.switchToken);
+      else await login(target.email, target.password);
+      await confirmSwitchedAccount();
+    } catch (error) {
+      // The server may have changed Cookie before a response was lost. Never
+      // restore the old editor on assumption; re-read authoritative identity.
+      setLogoutError((error as Error).message);
+    }
+  };
   useEffect(() => { for (const queue of queues.current.values()) queue.setSyncInterval(syncIntervalSeconds * 1000); }, [syncIntervalSeconds]);
   useEffect(() => {
     const online = () => { for (const queue of queues.current.values()) queue.retryOnline(); };
     window.addEventListener("online", online);
     return () => window.removeEventListener("online", online);
   }, []);
-  useEffect(() => { const queue = selectedId ? queues.current.get(selectedId) : undefined; if (queue) queue.notify(); else { setSaveStatus("idle"); setSaveError(""); setSaveInfo({ localSaved: false }); } setCopyText(""); }, [selectedId]);
+  useEffect(() => { setCopyText(""); }, [selectedId]);
 
   useEffect(() => { const timer = window.setTimeout(() => setDebouncedSearch(search), 300); return () => window.clearTimeout(timer); }, [search]);
   const filters = useMemo<NoteFilters>(() => ({
@@ -92,8 +126,8 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     sortDir: sort.dir,
   }), [scope, debouncedSearch, sort]);
   const folders = useQuery({ queryKey: ["user", user.id, "folders"], queryFn: listFolders });
-  const notes = useInfiniteQuery({ queryKey: ["user", user.id, "notes", filters], initialPageParam: 1, queryFn: ({ pageParam, signal }) => listNotes(filters, pageParam, signal), getNextPageParam: page => page.hasMore ? page.page + 1 : undefined });
-  const noteItems = [...new Map(notes.data?.pages.flatMap(page => page.items).map(note => [note.id, note]) ?? []).values()];
+  const notes = useInfiniteQuery({ queryKey: ["user", user.id, "notes", filters], enabled: scope.kind !== "none", initialPageParam: 1, queryFn: ({ pageParam, signal }) => listNotes(filters, pageParam, signal), getNextPageParam: page => page.hasMore ? page.page + 1 : undefined });
+  const noteItems = scope.kind === "none" ? [] : [...new Map(notes.data?.pages.flatMap(page => page.items).map(note => [note.id, note]) ?? []).values()];
   const listKey = JSON.stringify(filters);
   const rememberList = () => {
     const list = listRef.current; if (!list || list.clientHeight === 0) return;
@@ -117,12 +151,13 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     if (selected.data) { try { localStorage.setItem("uranus.lastNote." + user.id, String(selected.data.id)); } catch { /* optional preference */ } }
   }, [selected.data?.id, user.id]);
   useEffect(() => {
-    if (!selectedId) { try { const last = localStorage.getItem("uranus.lastNote." + user.id); if (last && /^\d+$/.test(last)) navigate("/notes/" + last, { replace: true }); } catch { /* optional preference */ } }
-  }, [user.id]);
+    // Direct note URLs establish their notebook; the home page never restores a stale selection.
+    if (scope.kind === "none" && selectedNote) setScope(selectedNote.deletedAt ? { kind: "trash" } : { kind: "folder", folderId: selectedNote.folderId });
+  }, [scope.kind, selectedNote]);
   useEffect(() => {
     setDraftCandidate(undefined);
     let cancelled = false;
-    if (selected.data) void getDraft(selected.data.id, user.id).then(async draft => draft ?? (defaultDataOwner ? await getDraft(selected.data!.id, user.id, true) : undefined)).then(draft => { if (!cancelled) setDraftCandidate(draft); }).catch((error: Error) => setSaveError(`无法读取本地草稿：${error.message}`));
+    if (selected.data) void getDraft(selected.data.id, user.id).then(async draft => draft ?? (defaultDataOwner ? await getDraft(selected.data!.id, user.id, true) : undefined)).then(draft => { if (!cancelled) setDraftCandidate(draft); }).catch((error: Error) => { if (!cancelled) saveSignals.update(selected.data!.id, { error: `无法读取本地草稿：${error.message}` }); });
     return () => { cancelled = true; };
   }, [selected.data?.id]);
 
@@ -130,7 +165,7 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     let queue = queues.current.get(note.id);
     if (!queue) {
       queue = new NoteSaveQueue(note.id, note.revision, (status, saved, error, info) => {
-        if (selectedIdRef.current === note.id) { setSaveStatus(status); setSaveError(error?.message ?? ""); setSaveInfo(info ?? { localSaved: false }); }
+        saveSignals.update(note.id, { status, error: error?.message ?? "", info: info ?? { localSaved: false } });
         if (status === "conflict") setConflictLatest((error as ApiClientError | undefined)?.body?.error.latest);
         if (saved) queryClient.setQueryData(["user", user.id, "note", saved.id], saved);
         if (status === "saved") {
@@ -172,19 +207,19 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("beforeunload", beforeUnload);
     return () => { document.removeEventListener("visibilitychange", visibility); window.removeEventListener("beforeunload", beforeUnload); };
-  }, [saveStatus]);
+  }, []);
   useEffect(() => {
     const save = (event: KeyboardEvent) => {
       if (event.isComposing || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s" || !selectedNote || selectedNote.deletedAt || document.querySelector('[role="dialog"]')) return;
       event.preventDefault();
-      if (!["saving", "saved", "idle", "conflict"].includes(saveStatus)) void queueFor(selectedNote).flush();
+      if (!["saving", "saved", "idle", "conflict"].includes(saveSignals.get(selectedNote.id).status)) void queueFor(selectedNote).flush();
     };
     window.addEventListener("keydown", save);
     return () => window.removeEventListener("keydown", save);
-  }, [selectedNote, saveStatus]);
+  }, [selectedNote]);
 
-  const chooseScope = (next: Scope) => { setScope(next); if (layout === "focus") setLayout("three"); };
-  const openNoteMenu = (note: NoteListItem, anchor: PopupAnchor) => { setNoteMenu({ note, anchor }); setMoveMenu(false); };
+  const chooseScope = (next: Scope) => { if (selectedNote) void queueFor(selectedNote).flush(); rememberList(); setSearch(""); setDebouncedSearch(""); setScope(next); setVersionsOpen(false); navigate("/"); if (layout === "focus") setLayout("three"); };
+  const openNoteMenu = (note: NoteListItem, anchor: PopupAnchor, workspace = false) => { setNoteMenu({ note, anchor, workspace }); setMoveMenu(false); };
   const manageNote = async (patch: NotePatch | "delete" | "restore" | "permanent") => {
     if (!noteMenu || menuBusy) return;
     const target = noteMenu.note; setMenuBusy(true);
@@ -204,7 +239,17 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     } catch (error) { setNotice("操作失败：" + (error as Error).message); }
     finally { setMenuBusy(false); }
   };
-  if (locked) return <main className="center-message"><p>界面已锁定；仅在服务器确认后完成退出。</p><p role="alert">{logoutError}</p><button onClick={() => void exitAccount()}>重试退出</button></main>;
+  if (locked) return <main className="center-message"><p>{switching ? "正在切换账号；确认账号前暂停编辑。" : "界面已锁定；仅在服务器确认后完成退出。"}</p><p role="alert">{logoutError}</p>{switching ? logoutError && <button onClick={() => void confirmSwitchedAccount()}>重新确认账号</button> : <button onClick={() => void exitAccount()}>重试退出</button>}</main>;
+  const closeAppActions = () => { setNoteMenu(null); setAppMenu(null); };
+  const appActions = <div className="workspace-menu-actions">
+    <button title="设置" onClick={() => { closeAppActions(); setSettingsOpen(true); }}><SettingsIcon />设置</button>
+    <button title="切换账号" onClick={() => {
+      const anchor = document.querySelector<HTMLElement>(".note-more, .workspace-more");
+      closeAppActions(); if (anchor) setAccountMenu(anchor);
+    }}><LogOut />切换账号</button>
+    <button title="切换主题" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun /> : <Moon />}切换主题</button>
+    <button title="退出" onClick={() => { closeAppActions(); void exitAccount(); }}><LogOut />退出</button>
+  </div>;
   return <main className={`workspace layout-${layout}`}>
     {layout === "three" && <aside className="sidebar">
       <div className="brand"><img src="/icon.svg" alt="" /><strong>Uranus</strong></div>
@@ -224,10 +269,6 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           } catch (error) { alert((error as Error).message); }
         }}><MoreHorizontal /></button></div>)}
       </nav>
-      <div className="sidebar-footer">
-        <button title="切换主题" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun /> : <Moon />}</button>
-        <button title="退出" onClick={async () => { await exitAccount(); }}><LogOut /></button>
-      </div>
     </aside>}
 
     {layout !== "focus" && <section className="note-list-panel">
@@ -239,7 +280,7 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
         <button className="icon-primary" aria-label="新建笔记" title="新建笔记 (⌘N)" onClick={() => createMutation.mutate()}><FilePlus2 /></button>
       </header>
       <div className="list-options"><SortControls /></div>
-      {search && <div className="search-feedback" role="status">范围：{scope.kind === "folder" ? folders.data?.find(f => f.id === scope.folderId)?.name : ({ all: "全部笔记", starred: "已加星标", trash: "最近删除" })[scope.kind]} · {search !== debouncedSearch || notes.isFetching ? "正在搜索…" : notes.error ? "搜索失败" : noteItems.length ? "匹配 " + (notes.data?.pages[0]?.totalCount ?? noteItems.length) + " 篇" : "无匹配结果"}</div>}
+      {search && scope.kind !== "none" && <div className="search-feedback" role="status">范围：{scope.kind === "folder" ? folders.data?.find(f => f.id === scope.folderId)?.name : ({ all: "全部笔记", starred: "已加星标", trash: "最近删除" })[scope.kind]} · {search !== debouncedSearch || notes.isFetching ? "正在搜索…" : notes.error ? "搜索失败" : noteItems.length ? "匹配 " + (notes.data?.pages[0]?.totalCount ?? noteItems.length) + " 篇" : "无匹配结果"}</div>}
       <div className="note-list" ref={listRef} onScroll={rememberList} aria-busy={notes.isLoading || search !== debouncedSearch}>
         {(search === debouncedSearch ? noteItems : []).map((note) => <div key={note.id} className="note-row-wrapper" data-note-id={note.id} onContextMenu={event => { event.preventDefault(); openNoteMenu(note, pointAnchor(event.currentTarget, event.clientX, event.clientY)); }} onKeyDown={event => { if (!event.nativeEvent.isComposing && event.shiftKey && event.key === "F10") { event.preventDefault(); openNoteMenu(note, event.currentTarget.querySelector<HTMLElement>(".note-row-more")!); } }}>
           <button className={`note-row ${selectedId === note.id ? "active" : ""}`} onClick={() => { rememberList(); navigate(`/notes/${note.id}`); }}>
@@ -247,9 +288,9 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           {note.searchMatch ? <p><SearchSnippet match={note.searchMatch} /></p> : note.snippet.trim() !== note.title.trim() ? <p>{note.snippet || "暂无内容"}</p> : !note.title && <p>暂无内容</p>}<time title={new Date(sort.by === "created_at" ? note.createdAt : note.updatedAt).toLocaleString()}>{sort.by === "created_at" ? "创建" : "更新"} · {noteTime(sort.by === "created_at" ? note.createdAt : note.updatedAt)}</time>
           </button><button className="note-row-more" aria-label={`管理笔记：${note.title || "未命名笔记"}`} aria-haspopup="dialog" aria-expanded={noteMenu?.note.id === note.id} onClick={event => openNoteMenu(note, event.currentTarget)}><MoreHorizontal /></button>
         </div>)}
-        {notes.hasNextPage && <button className="load-more" disabled={notes.isFetchingNextPage} onClick={() => void notes.fetchNextPage()}>加载更多笔记</button>}
-        {notes.error && <div role="alert">列表加载失败 <button onClick={() => void notes.refetch()}>重试</button></div>}
-        {!notes.isLoading && !notes.error && noteItems.length === 0 && search === debouncedSearch && <div className="empty-state">{search ? "没有匹配的笔记，试试其他关键词或范围。" : "这里还没有笔记"}</div>}
+        {scope.kind !== "none" && notes.hasNextPage && <button className="load-more" disabled={notes.isFetchingNextPage} onClick={() => void notes.fetchNextPage()}>加载更多笔记</button>}
+        {scope.kind !== "none" && notes.error && <div role="alert">列表加载失败 <button onClick={() => void notes.refetch()}>重试</button></div>}
+        {scope.kind !== "none" && !notes.isLoading && !notes.error && noteItems.length === 0 && search === debouncedSearch && <div className="empty-state">{search ? "没有匹配的笔记，试试其他关键词或范围。" : "这里还没有笔记"}</div>}
       </div>
     </section>}
 
@@ -259,17 +300,17 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           <button className="back-to-list" aria-label="返回笔记列表" onClick={() => { void queueFor(selectedNote).flush(); if (layout === "focus") setLayout("two"); navigate("/"); }}><ChevronLeft /></button>
           {layout !== "three" && <button aria-label="三栏视图" onClick={() => setLayout("three")}><LayoutPanelLeft /></button>}
           {layout === "three" && <button aria-label="收起侧栏" onClick={() => setLayout("two")}><PanelLeftClose /></button>}
-          <div className="note-identity"><div ref={setTitleHost} className="note-title-host" /><span role="status" title={saveStatus === "dirty" ? localSaveText : saveInfo.confirmedAt ? `最近服务器确认：${new Date(saveInfo.confirmedAt).toLocaleString()}` : undefined} className={`save-state status-${saveStatus}`}>{uploading ? "图片上传中…" : saveStatus === "dirty" ? localSaveText : saveStatus === "error" ? (saveInfo.localSaved ? "未同步，草稿已暂存此浏览器" : "内容尚未安全保存") : statusText[saveStatus]}{saveError ? `：${saveError}` : ""}</span></div>
+          <div className="note-identity"><div ref={setTitleHost} className="note-title-host" /><SaveFeedback signals={saveSignals} id={selectedNote.id} /></div>
           <button className={selectedNote.pinned ? "active" : ""} title="置顶" onClick={() => queueFor(selectedNote).enqueue({ pinned: !selectedNote.pinned }, 0)}><Pin /></button>
           <button className={selectedNote.starred ? "active" : ""} title="星标" aria-pressed={selectedNote.starred} onClick={() => queueFor(selectedNote).enqueue({ starred: !selectedNote.starred }, 0)}><Star fill={selectedNote.starred ? "currentColor" : "none"} /></button>
           {!selectedNote.deletedAt && <select className="folder-select" aria-label="移动到文件夹" value={selectedNote.folderId} onChange={(event) => queueFor(selectedNote).enqueue({ folder_id: Number(event.target.value) }, 0)}>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
           <button title="版本历史" aria-label="版本历史" aria-expanded={versionsOpen} onClick={() => setVersionsOpen((value) => !value)}><History /></button>
-          <button className="note-more" aria-label="笔记更多" aria-haspopup="dialog" onClick={event => openNoteMenu(selectedNote, event.currentTarget)}><MoreHorizontal /></button>
+          <button className="note-more" aria-label="笔记更多" aria-haspopup="dialog" onClick={event => openNoteMenu(selectedNote, event.currentTarget, true)}><MoreHorizontal /></button>
         </header>
-        {(saveStatus === "error" || saveError) && <div className="draft-banner"><span>{saveInfo.localSaved ? "本机草稿尚未同步到服务器。" : "服务器保存和本机暂存均未确认，请保留内容。"}</span><button onClick={() => void queueFor(selectedNote).flush()}>重试保存</button><button onClick={async () => { const content = queueFor(selectedNote).localContent(); const value = JSON.stringify(content ?? selectedNote.content, null, 2); try { await navigator.clipboard.writeText(value); setNotice("已复制未保存正文 JSON"); } catch { setCopyText(value); } }}>复制未保存内容</button></div>}
+        <SaveFeedback banner signals={saveSignals} id={selectedNote.id} retry={() => void queueFor(selectedNote).flush()} copy={() => { const value = JSON.stringify(queueFor(selectedNote).localContent() ?? selectedNote.content, null, 2); void navigator.clipboard.writeText(value).then(() => setNotice("已复制未保存正文 JSON"), () => setCopyText(value)); }} />
         {copyText && <div className="draft-banner"><label>请手工选择并复制<textarea aria-label="未保存内容" readOnly value={copyText} onFocus={e => e.currentTarget.select()} /></label><button onClick={() => setCopyText("")}>关闭</button></div>}
         {draftCandidate && <div className="draft-banner"><span>发现 {new Date(draftCandidate.updatedAt).toLocaleString()} 的本机未提交草稿{draftCandidate.baseRevision !== selectedNote.revision ? "；服务器版本已改变" : ""}。</span><button onClick={() => {
-          try { if (![1, 2, 3, 4, 5].includes(draftCandidate.contentSchemaVersion)) throw new Error("草稿版本不受支持，请升级应用"); validateAndDeriveContent(draftCandidate.content, draftCandidate.contentSchemaVersion); } catch (error) { setNotice((error as Error).message); return; }
+          try { if (!supportsSchema(draftCandidate.contentSchemaVersion)) throw new Error("草稿版本不受支持，请升级应用"); validateAndDeriveContent(draftCandidate.content, draftCandidate.contentSchemaVersion); } catch (error) { setNotice((error as Error).message); return; }
           if (draftCandidate.baseRevision !== selectedNote.revision) { setNotice("服务器版本已改变，请先保留或复制本机草稿，不能直接覆盖服务器"); setCopyText(JSON.stringify(draftCandidate.content, null, 2)); return; }
           const local = { ...selectedNote, content: draftCandidate.content };
           queryClient.setQueryData(["user", user.id, "note", selectedNote.id], local);
@@ -283,21 +324,35 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           const copy = await createNoteWithContent(selectedNote.folderId, content as Record<string, unknown>);
           queue.resolveWithServer(conflictLatest.revision); queryClient.setQueryData(["user", user.id, "note", selectedNote.id], conflictLatest); setConflictLatest(undefined); await queryClient.invalidateQueries(); navigate(`/notes/${copy.id}`);
         }}>复制本机内容</button></div>}
-        <NoteEditor key={`${selectedNote.id}-${editorEpoch}`} note={selectedNote} titleHost={titleHost} readOnlyBecauseDeleted={selectedNote.deletedAt !== null} onUploadState={setUploading} onChange={(content) => queueFor(selectedNote).enqueue({ content: content as Record<string, unknown> })} onFlush={() => queueFor(selectedNote).flush()} onPersistLocal={() => queueFor(selectedNote).persistLocal()} />
+        <NoteEditor key={`${selectedNote.id}-${editorEpoch}`} note={selectedNote} titleHost={titleHost} readOnlyBecauseDeleted={selectedNote.deletedAt !== null} onUploadState={uploading => saveSignals.update(selectedNote.id, { uploading })} onChange={(content) => queueFor(selectedNote).enqueue({ content: content as Record<string, unknown> })} onFlush={() => queueFor(selectedNote).flush()} onPersistLocal={() => queueFor(selectedNote).persistLocal()} />
         {versionsOpen && <VersionPanel userId={user.id} note={selectedNote} beforeAction={async () => { const queue = queueFor(selectedNote); await queue.flush(); if (queue.hasUnsaved()) throw new Error("请先解决正文保存问题"); }} onClose={() => setVersionsOpen(false)} onRestored={async (restored) => { queues.current.delete(restored.id); queryClient.setQueryData(["user", user.id, "note", restored.id], restored); setEditorEpoch(value => value + 1); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"] }); setVersionsOpen(false); }} />}
-      </> : <div className="empty-editor"><img src="/icon.svg" alt="" /><h2>{selected.error ? "笔记不存在或无权访问" : "选择一篇笔记"}</h2><p>或创建一篇新笔记开始记录。</p><button className="primary" onClick={() => createMutation.mutate()}>新建笔记</button>{layout === "focus" && <button onClick={() => setLayout("three")}>返回笔记列表</button>}</div>}
+      </> : selected.error ? <div className="empty-editor"><h2>笔记不存在或无权访问</h2></div> : null}
     </section>
     {notice && <div className="notice" role="status">{notice}{job.data?.status === "failed" && <button onClick={async () => { try { await retryMaintenanceJob(jobId!); setNotice("重试任务已入队，正在处理中"); await job.refetch(); } catch (error) { setNotice((error as Error).message); } }}>重试删除任务</button>}{deletedNote && <button onClick={() => restoreMutation.mutate(deletedNote)} disabled={restoreMutation.isPending}>撤销</button>}<button aria-label="关闭提示" onClick={() => { setNotice(""); setDeletedNote(undefined); }}>×</button></div>}
-    <button className="settings-launcher" aria-label="设置" title="设置" aria-haspopup="dialog" onClick={() => setSettingsOpen(true)}><SettingsIcon /></button>
+    {!selectedNote && <button className="workspace-more" aria-label="更多" aria-haspopup="dialog" onClick={event => setAppMenu(event.currentTarget)}><MoreHorizontal /></button>}
+    {appMenu && <Popup anchor={appMenu} title="更多" close={() => setAppMenu(null)}>{appActions}</Popup>}
     {settingsOpen && <Settings user={user} beforeSensitiveChange={beforeSensitiveChange} onClose={() => setSettingsOpen(false)} />}
+    {accountMenu && <AccountSwitcher anchor={accountMenu} close={() => setAccountMenu(null)} change={changeAccount} />}
+    {exportNote && <ExportPopup {...exportNote} localContent={id => queues.current.get(id)?.localContent()} close={() => setExportNote(null)} />}
     {noteMenu && <Popup anchor={noteMenu.anchor} title={noteMenu.note.title || "未命名笔记"} close={() => setNoteMenu(null)} back={moveMenu ? () => setMoveMenu(false) : undefined}>
       {noteMenu.note.deletedAt ? <><button disabled={menuBusy} onClick={() => void manageNote("restore")}>恢复笔记</button><hr /><button className="danger" disabled={menuBusy} onClick={() => void manageNote("permanent")}>永久删除…</button></> : moveMenu ? folders.data?.map(folder => <button key={folder.id} disabled={menuBusy} aria-pressed={folder.id === noteMenu.note.folderId} onClick={() => void manageNote({ folder_id: folder.id })}>{folder.name}</button>) : <>
         <button disabled={menuBusy} onClick={() => void manageNote({ pinned: !noteMenu.note.pinned })}>{noteMenu.note.pinned ? "取消置顶" : "置顶"}</button>
         <button disabled={menuBusy} onClick={() => void manageNote({ starred: !noteMenu.note.starred })}>{noteMenu.note.starred ? "取消星标" : "加星标"}</button>
         <button aria-haspopup="true" disabled={menuBusy} onClick={() => setMoveMenu(true)}>移动到文件夹 ›</button>
         {selectedId === noteMenu.note.id && <button onClick={() => { setVersionsOpen(true); setNoteMenu(null); }}>版本历史</button>}
+        <button onClick={async () => {
+          try {
+            const note = await getNote(noteMenu.note.id), content = queues.current.get(note.id)?.localContent() ?? note.content;
+            const url = URL.createObjectURL(new Blob([toMarkdown(content)], { type: "text/markdown;charset=utf-8" }));
+            const link = document.createElement("a"); link.href = url; link.download = safeFileName(validateAndDeriveContent(content).title, `uranus-note-${note.id}`) + ".md"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+            setNoteMenu(null); setNotice("已导出 Markdown；图片和文件仅保留相对路径，未包含附件字节。样式转换不保证往返无损。");
+          } catch (error) { setNotice(`导出失败：${(error as Error).message}`); }
+        }}>导出 Markdown</button>
+        <button onClick={() => { setExportNote({ noteId: noteMenu.note.id, folderId: noteMenu.note.folderId, anchor: noteMenu.anchor }); setNoteMenu(null); }}>导出 ZIP（含附件）</button>
+        {selectedId === noteMenu.note.id && <button onClick={() => { setNoteMenu(null); window.dispatchEvent(new Event("uranus-print-note")); }}>打印 / 保存为 PDF</button>}
         <hr /><button className="danger" disabled={menuBusy} onClick={() => void manageNote("delete")}>移入最近删除</button>
       </>}
+      {noteMenu.workspace && !moveMenu && <><hr />{appActions}</>}
     </Popup>}
   </main>;
 }

@@ -1,0 +1,43 @@
+import { test, expect } from './fixtures';
+import { testEmail, testPassword } from './credentials';
+import type { Editor } from '@tiptap/core';
+
+test('grouped toolbar preserves selection, nested popup and keyboard access', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('邮箱', { exact: true }).fill(testEmail());
+  await page.getByLabel('密码', { exact: true }).fill(testPassword());
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByTitle('新建笔记 (⌘N)').click();
+  const body = page.locator('.prose-editor');
+  await body.fill('选择文字');
+  await body.evaluate(el => {
+    const editor = (el as HTMLElement & { editor: Editor }).editor;
+    editor.commands.setTextSelection({ from: 1, to: 5 });
+  });
+  const toolbar = page.getByLabel('格式工具栏', { exact: true });
+  const trigger = page.getByRole('button', { name: '更多格式与插入', exact: true });
+  await expect(toolbar.getByRole('button', { name: '删除线', exact: true })).toHaveCount(0);
+  await trigger.click();
+  const menu = page.getByRole('dialog', { name: '更多格式与插入', exact: true });
+  await expect(menu.getByRole('button', { name: '复制代码', exact: true })).toBeDisabled();
+  await menu.getByRole('button', { name: '删除线', exact: true }).click();
+  await expect(body.locator('s')).toHaveText('选择文字');
+  await expect(menu).toHaveCount(0);
+  await toolbar.getByRole('button', { name: '撤销', exact: true }).click();
+  await expect(body.locator('s')).toHaveCount(0);
+  await trigger.click();
+  await menu.getByRole('button', { name: '插入标签', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '插入标签', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await trigger.click();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  const box = await menu.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+});

@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./fixtures";
 import { expect, test, type Page } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 
@@ -5,7 +6,7 @@ async function login(page: Page) {
   await page.goto("/login");
   await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByText("关于与部署", { exact: true }).click();
 }
 
@@ -46,7 +47,7 @@ test("install offer survives settings reopening; cancellation and failure preser
       userChoice: Promise.resolve({ outcome: "dismissed" }),
     }));
   });
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByText("关于与部署", { exact: true }).click();
   expect(await page.evaluate(() => (window as unknown as { promptCalls: number }).promptCalls)).toBe(0);
   await page.getByRole("button", { name: "安装 Uranus", exact: true }).click();

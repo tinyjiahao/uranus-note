@@ -62,7 +62,7 @@ function cellAttributes() {
       renderHTML: (attrs: Record<string, unknown>) => attrs.verticalAlign ? { style: `vertical-align: ${attrs.verticalAlign}` } : {} },
   };
 }
-const cellContent = "(paragraph | image | bulletList | orderedList | taskList | blockquote | codeBlock)+";
+const cellContent = "(paragraph | image | fileAttachment | bulletList | orderedList | taskList | blockquote | codeBlock)+";
 const Cell = TableCell.extend({ content: cellContent, addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
 const Header = TableHeader.extend({ content: cellContent, addAttributes() { return { ...this.parent?.(), ...cellAttributes() }; } });
 
@@ -73,8 +73,8 @@ class UranusTableView extends TableView {
   private rowNumbers: HTMLDivElement;
   private observer: ResizeObserver;
   private frame = 0;
-  constructor(node: PMNode, private editor: Editor, private getPos: () => number | undefined, view: EditorView) {
-    super(node, 64, view);
+  constructor(node: PMNode, private editor: Editor, private getPos: () => number | undefined, private ownerView: EditorView) {
+    super(node, 64, ownerView);
     this.stage = document.createElement("div"); this.stage.className = "table-stage";
     this.dom.appendChild(this.stage); this.stage.appendChild(this.table);
     this.handles = document.createElement("div"); this.handles.className = "table-handles"; this.handles.contentEditable = "false";
@@ -85,6 +85,7 @@ class UranusTableView extends TableView {
     this.table.addEventListener("pointerdown", this.startDrag);
     this.table.addEventListener("contextmenu", this.contextMenu);
     this.dom.addEventListener("scroll", this.overflow);
+    ownerView.dom.addEventListener("compositionend", this.finishComposition);
     window.addEventListener("uranus-table-row-numbers", this.layoutHandles);
     editor.on("selectionUpdate", this.active);
     this.observer = new ResizeObserver(() => this.layoutHandles());
@@ -101,16 +102,18 @@ class UranusTableView extends TableView {
     } else delete this.dom.dataset.selectionLabel;
   };
   private layoutHandles = () => {
-    if (!this.editor.isEditable) { this.handles.replaceChildren(); delete this.handles.dataset.shape; return; }
+    if (this.ownerView.composing) return;
     const rows = Array.from(this.table.rows); const cells = Array.from(rows[0]?.cells ?? []);
     let showNumbers = false;
     try { showNumbers = localStorage.getItem("uranus.table.rowNumbers") === "1"; } catch { /* Preference storage is optional. */ }
     this.dom.classList.toggle("show-row-numbers", showNumbers);
-    this.rowNumbers.replaceChildren(...rows.map((row, index) => {
+    const bodyRows = rows.filter(row => !Array.from(row.cells).every(cell => cell.tagName === "TH"));
+    this.rowNumbers.replaceChildren(...bodyRows.map((row, index) => {
       const number = document.createElement("span"); number.textContent = String(index + 1);
       number.style.top = `${row.offsetTop}px`; number.style.height = `${row.offsetHeight}px`;
       return number;
     }));
+    if (!this.editor.isEditable) { this.handles.replaceChildren(); delete this.handles.dataset.shape; return; }
     const shape = `${rows.length}:${cells.length}`;
     if (this.handles.dataset.shape !== shape) {
       this.handles.dataset.shape = shape; this.handles.replaceChildren();
@@ -223,9 +226,12 @@ class UranusTableView extends TableView {
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", commit);
     window.addEventListener("pointercancel", cancel); window.addEventListener("blur", cancel); window.addEventListener("keydown", key);
   };
+  private finishComposition = () => { cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => { if (!this.editor.isDestroyed) this.update(this.node); }); };
   override update(node: PMNode) {
     if (node.type !== this.node.type) return false;
-    this.node = node; updateColumns(node, this.colgroup, this.table, 64);
+    this.node = node;
+    if (this.ownerView.composing) return true;
+    updateColumns(node, this.colgroup, this.table, 64);
     const count = node.firstChild?.childCount ?? 1;
     this.table.style.minWidth = `${count * 64}px`;
     if (node.attrs.widthMode !== "fixed") this.table.style.width = "100%";
@@ -234,7 +240,7 @@ class UranusTableView extends TableView {
     return true;
   }
   stopEvent(event: Event) { return (event.target as HTMLElement).closest("button") !== null; }
-  destroy() { cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
+  destroy() { cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.ownerView.dom.removeEventListener("compositionend", this.finishComposition); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
 }
 const UranusTable = Table.extend({
   addAttributes() { return { widthMode: { default: "fluid", parseHTML: (el: HTMLElement) => el.dataset.widthMode === "fixed" ? "fixed" : "fluid", renderHTML: (attrs: Record<string, unknown>) => ({ "data-width-mode": attrs.widthMode }) } }; },
@@ -271,6 +277,19 @@ const UranusTable = Table.extend({
     };
   },
   addKeyboardShortcuts() {
+    const parent = this.parent?.();
+    const tab = (reverse: boolean) => {
+      if (!tableContext(this.editor)) return false;
+      if (this.editor.view.composing) return true;
+      // Cell navigation must not steal the existing list/code indentation keys.
+      if (this.editor.isActive("codeBlock")) return false;
+      const { $from } = this.editor.state.selection;
+      for (let depth = $from.depth; depth > 0; depth--) {
+        const name = $from.node(depth).type.name;
+        if (name === "listItem" || name === "taskItem") return reverse ? this.editor.commands.liftListItem(name) : this.editor.commands.sinkListItem(name);
+      }
+      return parent?.[reverse ? "Shift-Tab" : "Tab"]?.({ editor: this.editor }) ?? false;
+    };
     const clear = () => {
       if (!(this.editor.state.selection instanceof CellSelection)) return false;
       const tr = closeHistory(this.editor.state.tr); const cells: { pos: number; node: PMNode }[] = [];
@@ -278,7 +297,7 @@ const UranusTable = Table.extend({
       for (const { node, pos } of cells.reverse()) tr.replaceWith(pos + 1, pos + node.nodeSize - 1, this.editor.schema.nodes.paragraph!.create());
       this.editor.view.dispatch(tr); return true;
     };
-    return { ...this.parent?.(), Delete: clear, Backspace: clear, "Mod-Delete": clear, "Mod-Backspace": clear };
+    return { ...parent, Tab: () => tab(false), "Shift-Tab": () => tab(true), Delete: clear, Backspace: clear, "Mod-Delete": clear, "Mod-Backspace": clear };
   },
 }).configure({ resizable: false, cellMinWidth: 64, renderWrapper: true });
 const Budget = Extension.create({

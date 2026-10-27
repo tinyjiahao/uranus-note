@@ -1,0 +1,102 @@
+import { test, expect, openWorkspaceMenu } from "./fixtures";
+import { testEmail, testPassword } from "./credentials";
+
+test.use({ trace: "off" });
+test("failed account login requires authoritative identity confirmation before editing resumes", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail());
+  await page.getByLabel("密码", { exact: true }).fill(testPassword());
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.locator(".workspace")).toBeVisible();
+  const original = await (await page.request.get("/api/session")).json();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "切换账号", exact: true }).click();
+  const popup = page.getByRole("dialog", { name: "切换账号", exact: true });
+  for (const width of [1440, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    const box = (await popup.boundingBox())!;
+    expect(box.x + box.width).toBeCloseTo(width, 0);
+    expect(box.y).toBe(0);
+    expect(box.height).toBe(900);
+    const emailBox = (await popup.getByLabel("邮箱", { exact: true }).boundingBox())!;
+    const passwordBox = (await popup.getByLabel("密码", { exact: true }).boundingBox())!;
+    expect(emailBox.x).toBeCloseTo(passwordBox.x, 0);
+    expect(emailBox.width).toBeCloseTo(passwordBox.width, 0);
+    expect(emailBox.width).toBeGreaterThan(280);
+    expect(emailBox.x + emailBox.width).toBeLessThanOrEqual(width);
+    await expect(popup.locator(".remembered-account.is-current > button")).toHaveCSS("opacity", "1");
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: "test-results/account-switcher-drawer.png" });
+  await popup.getByLabel("显示密码", { exact: true }).check();
+  await expect(popup.getByLabel("密码", { exact: true })).toHaveAttribute("type", "text");
+  await popup.getByLabel("显示密码", { exact: true }).uncheck();
+  await popup.getByLabel("邮箱", { exact: true }).fill("nonexistent-switch@example.com");
+  await popup.getByLabel("密码", { exact: true }).fill("invalid-password");
+  await popup.getByRole("button", { name: "登录并切换", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重新确认账号", exact: true })).toBeVisible();
+  await expect(page.locator(".prose-editor")).toHaveCount(0);
+  await page.getByRole("button", { name: "重新确认账号", exact: true }).click();
+  await expect(page.locator(".workspace")).toBeVisible();
+  const current = await (await page.request.get("/api/session")).json();
+  expect(current.user.id).toBe(original.user.id);
+});
+
+test("remembered accounts switch without passwords, persist and isolate notes and other tabs", async ({ page, baseURL, browser }) => {
+  test.setTimeout(90_000);
+  if (!baseURL || !["localhost", "127.0.0.1"].includes(new URL(baseURL).hostname)) throw new Error("Local fixture only");
+  const otherEmail = "switch-browser@example.com", password = testPassword();
+  const registration = await page.request.post("/api/register", { headers: { Origin: baseURL }, data: { email: otherEmail, username: "switch-browser", password, confirmPassword: password } });
+  expect([201, 409]).toContain(registration.status());
+  await page.goto("/login");
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail());
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByTitle("新建笔记 (⌘N)").click();
+  const privateTitle = "switch-private-" + Date.now();
+  await page.getByLabel("笔记标题", { exact: true }).fill(privateTitle);
+  await page.locator(".prose-editor").fill("Only account A can read this.");
+  const originalUrl = page.url();
+  const secondTab = await page.context().newPage();
+  await secondTab.goto(originalUrl);
+  page.on("dialog", dialog => dialog.accept());
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "切换账号", exact: true }).click();
+  const popup = page.getByRole("dialog", { name: "切换账号", exact: true });
+  await popup.getByLabel("邮箱", { exact: true }).fill(otherEmail);
+  await popup.getByLabel("密码", { exact: true }).fill(password);
+  await popup.getByRole("button", { name: "登录并切换", exact: true }).click();
+  await expect(popup).toHaveCount(0);
+  await expect(page.locator(".workspace")).toBeVisible();
+  await expect(page.locator(".note-row").filter({ hasText: privateTitle })).toHaveCount(0);
+  await expect(secondTab.locator(".prose-editor")).toHaveCount(0);
+  expect((await page.request.get(new URL(originalUrl).pathname.replace("/notes/", "/api/notes/"))).status()).toBe(404);
+  await page.reload(); await expect(page.locator(".workspace")).toBeVisible();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "切换账号", exact: true }).click();
+  await popup.getByRole("button", { name: `切换到 ${testEmail()}`, exact: true }).click();
+  await expect(page.locator(".workspace")).toBeVisible();
+  await page.getByRole("button", { name: "全部笔记", exact: true }).click();
+  await expect(page.locator(".note-row").filter({ hasText: privateTitle })).toBeVisible();
+  await secondTab.close();
+  const cookies = await page.context().cookies();
+  for (const name of ["uranus_session", "uranus_accounts"]) {
+    const cookie = cookies.find(value => value.name === name)!;
+    expect(cookie.httpOnly).toBe(true); expect(cookie.sameSite).toBe("Strict");
+    expect(cookie.expires * 1000 - Date.now()).toBeGreaterThan(86_000_000);
+  }
+  const restarted = await browser.newContext({ storageState: await page.context().storageState() });
+  const reopened = await restarted.newPage(); await reopened.goto(baseURL);
+  await expect(reopened.locator(".workspace")).toBeVisible();
+  await restarted.close();
+  // The remembered list still works when only the active Cookie is gone.
+  await page.context().clearCookies({ name: "uranus_session" });
+  await page.goto("/login");
+  await page.getByRole("button", { name: "切换已登录账号", exact: true }).click();
+  await popup.getByRole("button", { name: `切换到 ${testEmail()}`, exact: true }).click();
+  await expect(page.locator(".workspace")).toBeVisible();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "切换账号", exact: true }).click();
+  await popup.getByRole("button", { name: `移除 ${otherEmail}`, exact: true }).click();
+  await expect(popup.getByRole("button", { name: `切换到 ${otherEmail}`, exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "退出", exact: true }).click();
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
+  expect((await page.context().cookies()).filter(cookie => ["uranus_session", "uranus_accounts"].includes(cookie.name))).toHaveLength(0);
+});

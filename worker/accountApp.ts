@@ -10,6 +10,7 @@ import { assertOrigin, clearSessionCookie, setSessionCookie } from "./middleware
 import { requestContext } from "./middleware/security";
 import { authenticateAccount, changeAccountEmail, changeAccountPassword, registerAccount, renameAccount } from "./services/accounts";
 import { issueAccountSession, readAccountSession, revokeAccountSession } from "./services/accountSessions";
+import { MAX_REMEMBERED_ACCOUNTS, rememberedAccounts, writeRememberedAccounts } from "./services/rememberedAccounts";
 import { businessWrite } from "./services/businessWrite";
 import { getJob } from "./services/maintenance";
 import { folderRoutes } from "./routes/folders";
@@ -58,12 +59,20 @@ accountApp.get("/api/session", async (c) => {
 });
 accountApp.post("/api/session", async (c) => {
   assertOrigin(c);
+  const current = await readAccountSession(c.env.DB, c.env.SESSION_SECRET, getCookie(c, "uranus_session"));
+  if (current && !timingSafeEqual(c.req.header("X-CSRF-Token") ?? "", current.csrf)) throw new ApiError(403, "CSRF_REJECTED", "请刷新页面后登录其他账号");
   const body: unknown = await c.req.json().catch(() => null);
   const email = emailSchema.safeParse(body && typeof body === "object" && "email" in body ? body.email : null);
   await rateLimit(c, "login", email.success ? email.data.toLowerCase() : undefined);
   const verified = await authenticateAccount(c.env.DB, body);
+  const remembered = await rememberedAccounts(c);
+  const otherAccounts = remembered.filter(entry => entry.session.user.id !== verified.user.id);
+  if (otherAccounts.length >= MAX_REMEMBERED_ACCOUNTS) throw new ApiError(409, "ACCOUNT_LIMIT", "本浏览器最多记住 5 个账号，请先移除一个账号");
   const issued = await issueAccountSession(c.env.DB, c.env.SESSION_SECRET, verified.user.id, verified.credentialVersion, c.env.SESSION_TTL_SECONDS);
+  // Re-authentication replaces this browser's previous credential for this user.
+  for (const entry of remembered.filter(entry => entry.session.user.id === verified.user.id)) await revokeAccountSession(c.env.DB, entry.session);
   setSessionCookie(c, issued.token, issued.ttl);
+  writeRememberedAccounts(c, [...otherAccounts, { token: issued.token, session: { expiresAt: issued.expiresAt } }]);
   return c.json({ authenticated: true, user: verified.user, csrfToken: issued.csrf, expiresAt: issued.expiresAt });
 });
 accountApp.post("/api/register", async (c) => {
@@ -71,6 +80,29 @@ accountApp.post("/api/register", async (c) => {
   await rateLimit(c, "register");
   const user = await registerAccount(c.env.DB, c.env.REGISTRATION_ENABLED, await c.req.json().catch(() => null));
   return c.json({ registered: true, email: user.email }, 201);
+});
+// A valid remembered credential remains usable when the active account expires.
+// This token is scoped to the current cookie set, not a business-session CSRF.
+const switchToken = (c: AppContext, entries: Awaited<ReturnType<typeof rememberedAccounts>>) => hmac(c.env.SESSION_SECRET, "account-switch:" + entries.map(entry => entry.session.credentialDigest).sort().join(":"));
+accountApp.get("/api/account/sessions", async (c) => {
+  const entries = await rememberedAccounts(c);
+  const active = await readAccountSession(c.env.DB, c.env.SESSION_SECRET, getCookie(c, "uranus_session"));
+  return c.json({ accounts: entries.map(({ session }) => ({ user: session.user, expiresAt: session.expiresAt, current: session.user.id === active?.user.id })), limit: MAX_REMEMBERED_ACCOUNTS, switchToken: entries.length ? await switchToken(c, entries) : "" });
+});
+accountApp.post("/api/account/switch", async (c) => {
+  assertOrigin(c);
+  await rateLimit(c, "account-switch");
+  const entries = await rememberedAccounts(c);
+  const csrf = c.req.header("X-Account-Switch-Token");
+  if (!entries.length || !csrf || !timingSafeEqual(csrf, await switchToken(c, entries))) throw new ApiError(403, "CSRF_REJECTED", "账号列表已变化，请重新打开切换账号菜单");
+  const body = await c.req.json<{ userId?: unknown }>().catch(() => ({} as { userId?: unknown }));
+  const target = entries.find(entry => entry.session.user.id === body.userId);
+  if (!target) throw new ApiError(404, "ACCOUNT_NOT_REMEMBERED", "此账号登录已过期或未在本浏览器登录，请输入密码重新登录");
+  const session = await readAccountSession(c.env.DB, c.env.SESSION_SECRET, target.token);
+  if (!session) throw new ApiError(409, "SESSION_EXPIRED", "目标账号登录已失效，请重新登录");
+  setSessionCookie(c, target.token, Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000)));
+  writeRememberedAccounts(c, entries);
+  return c.json({ authenticated: true, user: session.user, csrfToken: session.csrf, expiresAt: session.expiresAt });
 });
 accountApp.use("/api/*", async (c, next) => {
   const session = await readAccountSession(c.env.DB, c.env.SESSION_SECRET, getCookie(c, "uranus_session"));
@@ -84,9 +116,20 @@ accountApp.use("/api/*", async (c, next) => {
   await next();
 });
 accountApp.delete("/api/session", async (c) => {
-  await revokeAccountSession(c.env.DB, c.get("accountSession")!);
+  const entries = await rememberedAccounts(c);
+  await c.env.DB.batch(entries.map(({ session }) => c.env.DB.prepare("UPDATE uranus_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE credential_digest=? AND user_id=?").bind(Date.now(), session.credentialDigest, session.user.id)));
+  writeRememberedAccounts(c, []);
   clearSessionCookie(c);
   return c.json({ authenticated: false });
+});
+accountApp.post("/api/account/forget", async (c) => {
+  const body = await c.req.json<{ userId?: unknown }>().catch(() => ({} as { userId?: unknown }));
+  if (body.userId === c.get("accountSession")!.user.id) throw new ApiError(400, "CURRENT_ACCOUNT", "不能移除当前账号，请先切换或退出");
+  const entries = await rememberedAccounts(c);
+  const target = entries.find(entry => entry.session.user.id === body.userId);
+  if (target) await revokeAccountSession(c.env.DB, target.session);
+  writeRememberedAccounts(c, entries.filter(entry => entry !== target));
+  return c.json({ removed: true });
 });
 accountApp.use("/api/*", async (c, next) => {
   if ((await c.env.DB.prepare("SELECT mode FROM uranus_runtime_state WHERE id=1").first<{ mode: string }>())?.mode === "restoring") {

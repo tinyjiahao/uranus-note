@@ -67,6 +67,8 @@ export const SearchHighlight = Extension.create({
 });
 
 export function updateEditorSearch(editor: Editor, query: string, active: number) {
+  const previous = searchHighlightKey.getState(editor.state);
+  if (editor.view.composing || (!query && !previous?.query)) return previous?.ranges.length ?? 0;
   editor.view.dispatch(editor.state.tr.setMeta(searchHighlightKey, { query, active }));
   const state = searchHighlightKey.getState(editor.state);
   const range = state?.ranges[state.active];

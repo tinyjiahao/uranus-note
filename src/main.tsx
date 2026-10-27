@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { App } from "./app/App";
 import "./styles.css";
+import "./ui-surfaces.css";
 import { installController } from "./state/install";
 
 // Capture once at startup, including events arriving before Settings is opened.

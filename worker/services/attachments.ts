@@ -5,24 +5,14 @@ import type { AccountSession } from "./accountSessions";
 import { businessWrite } from "./businessWrite";
 import { getNote } from "./notes";
 
-const MIME_EXTENSIONS: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
-const MAX_FILE_BYTES = 10_000_000;
+import { MIME_EXTENSIONS, MAX_FILE_BYTES, isMagicValid } from "../../shared/files";
 
 type AttachmentRow = {
   id: string; note_id: number; object_key: string; file_name: string; mime: string; size: number;
   etag: string | null; status: string; unreferenced_at: number | null;
 };
 
-function isMagicValid(mime: string, data: Uint8Array): boolean {
-  if (mime === "image/png") return [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, i) => data[i] === value);
-  if (mime === "image/jpeg") return data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
-  const ascii = (start: number, end: number) => String.fromCharCode(...data.slice(start, end));
-  if (mime === "image/webp") return ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
-  if (mime === "image/gif") return ascii(0, 6) === "GIF87a" || ascii(0, 6) === "GIF89a";
-  return false;
-}
-
-const safeFileName = (name: string) => name.replace(/[\u0000-\u001f\\/]/g, "_").slice(0, 255) || "image";
+const safeFileName = (name: string) => name.replace(/[\p{Cc}\\/]/gu, "_").slice(0, 255) || "attachment";
 const dto = (row: AttachmentRow) => ({ id: row.id, noteId: row.note_id, fileName: row.file_name, mime: row.mime, size: row.size, etag: row.etag, url: `/api/attachments/${row.id}` });
 
 async function rowById(db: D1Database, id: string, session?: AccountSession): Promise<AttachmentRow> {
@@ -33,13 +23,13 @@ async function rowById(db: D1Database, id: string, session?: AccountSession): Pr
 
 export async function uploadAttachment(db: D1Database, bucket: R2Bucket, noteId: number, operationId: string, file: File, session?: AccountSession) {
   validateOperationId(operationId);
-  if (!MIME_EXTENSIONS[file.type]) throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "仅支持 PNG、JPEG、WebP 和 GIF");
+  if (!Object.hasOwn(MIME_EXTENSIONS, file.type)) throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "仅支持图片、PDF、docx/xlsx/pptx、ZIP、TXT、Markdown 和 CSV");
   if (file.size > MAX_FILE_BYTES) throw new ApiError(413, "ATTACHMENT_TOO_LARGE", "附件超过 10,000,000 字节限制");
   const note = await db.prepare("SELECT id FROM uranus_notes WHERE id=? AND user_id IS ? AND deleted_at IS NULL AND purge_pending=0").bind(noteId, session?.user.id ?? null).first();
   if (!note) throw new ApiError(404, "NOTE_NOT_FOUND", "目标笔记不存在或不可编辑");
   const buffer = await file.arrayBuffer();
   if (buffer.byteLength !== file.size || buffer.byteLength > MAX_FILE_BYTES) throw new ApiError(413, "ATTACHMENT_TOO_LARGE", "附件实际大小超过限制");
-  if (!isMagicValid(file.type, new Uint8Array(buffer).slice(0, 16))) throw new ApiError(415, "INVALID_FILE_SIGNATURE", "文件内容与声明类型不符");
+  if (!isMagicValid(file.type, new Uint8Array(buffer))) throw new ApiError(415, "INVALID_FILE_SIGNATURE", "文件内容与声明类型不符（文本须为无 NUL 的 UTF-8）");
   const digest = await sha256(buffer);
   const hash = await requestHash("POST", "/api/attachments", { note_id: noteId, file_name: safeFileName(file.name), mime: file.type, size: file.size, digest });
   const replay = await existingOperation(db, operationId, hash, session?.user.id ?? null);

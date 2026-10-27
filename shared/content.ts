@@ -1,4 +1,10 @@
+import { contentSchemaVersionSchema, CURRENT_SCHEMA_VERSION } from "./schemaVersion";
 import { z } from "zod";
+import { supportsSchema, SCHEMA_FEATURE } from "./schemaVersion";
+import { labelAttributes } from "./label";
+import { fileAttachmentAttributes } from "./files";
+import { noteLinkAttributes } from "./noteLink";
+import { isTextColor, isHighlightColor } from "./textColors";
 import type { ContentNode } from "./dto";
 
 export const MAX_CONTENT_BYTES = 1_500_000;
@@ -8,12 +14,12 @@ export const MAX_DEPTH = 32;
 
 const blockNodes = new Set([
   "doc", "paragraph", "heading", "bulletList", "orderedList", "listItem", "taskList", "taskItem",
-  "blockquote", "codeBlock", "horizontalRule", "hardBreak", "table", "tableRow", "tableHeader", "tableCell", "image", "text",
+  "blockquote", "codeBlock", "horizontalRule", "hardBreak", "table", "tableRow", "tableHeader", "tableCell", "image", "text", "label", "fileAttachment", "noteLink",
 ]);
-const markNodes = new Set(["bold", "italic", "underline", "strike", "code", "highlight", "link", "small"]);
+const markNodes = new Set(["bold", "italic", "underline", "strike", "code", "highlight", "link", "small", "textColor"]);
 
 export const contentEnvelopeSchema = z.object({
-  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+  content_schema_version: contentSchemaVersionSchema,
   content: z.record(z.string(), z.unknown()),
 });
 
@@ -48,7 +54,8 @@ function safeLink(value: unknown): boolean {
   }
 }
 
-export function validateAndDeriveContent(input: unknown, schemaVersion = 5): DerivedContent {
+export function validateAndDeriveContent(input: unknown, schemaVersion: number = CURRENT_SCHEMA_VERSION): DerivedContent {
+  if (!supportsSchema(schemaVersion)) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "正文版本不受支持");
   const serialized = JSON.stringify(input);
   if (bytes(serialized) > MAX_CONTENT_BYTES) {
     throw new ContentValidationError("CONTENT_TOO_LARGE", "正文超过 1,500,000 字节限制", 413);
@@ -71,7 +78,7 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 5): Der
     if (node.type === "paragraph" || node.type === "heading") {
       const alignment = node.attrs?.textAlign;
       if (alignment != null && (typeof alignment !== "string" || !["left", "center", "right"].includes(alignment))) throw new ContentValidationError("INVALID_ALIGNMENT", "正文对齐仅支持靠左、居中或靠右");
-      if (alignment != null && schemaVersion < 3) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "正文对齐需要新版客户端，请刷新页面");
+      if (alignment != null && schemaVersion < SCHEMA_FEATURE.alignment) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "正文对齐需要新版客户端，请刷新页面");
     }
     if (node.type === "table") {
       for (const key of Object.keys(node.attrs ?? {})) {
@@ -86,13 +93,15 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 5): Der
       const richBlocks = new Set(["bulletList", "orderedList", "taskList", "blockquote", "codeBlock"]);
       for (const child of node.content ?? []) {
         if (child.type === "image") {
-          if (schemaVersion < 4) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "表格图片需要新版客户端，请刷新页面");
+          if (schemaVersion < SCHEMA_FEATURE.imageAlignment) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "表格图片需要新版客户端，请刷新页面");
+        } else if (child.type === "fileAttachment") {
+          if (schemaVersion < SCHEMA_FEATURE.tableAttachments) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "表格附件需要新版客户端，请刷新页面");
         } else if (child.type === "paragraph") {
-          if (child.content?.some(inline => !["text", "hardBreak"].includes(inline.type ?? ""))) throw new ContentValidationError("INVALID_TABLE", "单元格段落包含不支持的节点");
+          if (child.content?.some(inline => !["text", "hardBreak", "label", "noteLink"].includes(inline.type ?? ""))) throw new ContentValidationError("INVALID_TABLE", "单元格段落包含不支持的节点");
         } else if (richBlocks.has(child.type ?? "")) {
-          if (schemaVersion < 5) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "单元格富文本需要新版客户端，请刷新页面");
+          if (schemaVersion < SCHEMA_FEATURE.richCells) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "单元格富文本需要新版客户端，请刷新页面");
           let invalid = false;
-          const allowed = new Set(["paragraph", "hardBreak", "text", "bulletList", "orderedList", "taskList", "listItem", "taskItem", "blockquote", "codeBlock"]);
+          const allowed = new Set(["paragraph", "hardBreak", "text", "label", "noteLink", "fileAttachment", "bulletList", "orderedList", "taskList", "listItem", "taskItem", "blockquote", "codeBlock"]);
           const check = (descendant: ContentNode) => {
             if (!allowed.has(descendant.type ?? "")) invalid = true;
             descendant.content?.forEach(check);
@@ -114,8 +123,12 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 5): Der
     if (node.marks) {
       for (const mark of node.marks) {
         if (!markNodes.has(mark.type)) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", `不支持的标记：${mark.type}`);
+        if (mark.type === "textColor" || (mark.type === "highlight" && mark.attrs?.color != null)) {
+          if (schemaVersion < SCHEMA_FEATURE.textColors) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "文本颜色需要新版客户端，请刷新页面");
+          if (Object.keys(mark.attrs ?? {}).some(key => key !== "color") || !(mark.type === "textColor" ? isTextColor(mark.attrs?.color) : isHighlightColor(mark.attrs?.color))) throw new ContentValidationError("INVALID_COLOR", "文本颜色不受支持");
+        }
         if (mark.type === "small") {
-          if (schemaVersion < 5) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "小号文本需要新版客户端，请刷新页面");
+          if (schemaVersion < SCHEMA_FEATURE.richCells) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "小号文本需要新版客户端，请刷新页面");
           if (ancestors.includes("heading") || ancestors.includes("codeBlock") || node.marks.some(candidate => candidate.type === "code")) throw new ContentValidationError("INVALID_SMALL_TEXT", "标题和代码中不支持小号文本");
         }
         if (mark.type === "link" && !safeLink(mark.attrs?.href)) {
@@ -123,10 +136,18 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 5): Der
         }
       }
     }
+    if (node.type === "fileAttachment") {
+      if (schemaVersion < SCHEMA_FEATURE.fileAttachment) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "文件附件需要新版客户端");
+      if (ancestors.some(type => type === "tableCell" || type === "tableHeader") && schemaVersion < SCHEMA_FEATURE.tableAttachments) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "表格附件需要新版客户端，请刷新页面");
+      if (node.attrs?.display !== undefined && schemaVersion < SCHEMA_FEATURE.attachmentDisplay) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "附件展示样式需要新版客户端");
+      const parsed = fileAttachmentAttributes.safeParse(node.attrs);
+      if (!parsed.success || node.content !== undefined || node.marks !== undefined || !["doc", "blockquote", "listItem", "taskItem", "tableCell", "tableHeader"].includes(ancestors.at(-1) ?? "")) throw new ContentValidationError("INVALID_ATTACHMENT", "文件附件属性或位置无效");
+      attachments.add(parsed.data.attachmentId); textParts.push(parsed.data.fileName, "\n"); return parsed.data.fileName;
+    }
     if (node.type === "image") {
       const align = node.attrs?.imageAlign;
       if (align != null && (typeof align !== "string" || !["left", "center", "right"].includes(align))) throw new ContentValidationError("INVALID_ALIGNMENT", "图片对齐仅支持靠左、居中或靠右");
-      if (align != null && schemaVersion < 4) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "图片对齐需要新版客户端，请刷新页面");
+      if (align != null && schemaVersion < SCHEMA_FEATURE.imageAlignment) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "图片对齐需要新版客户端，请刷新页面");
       if (node.content?.length) throw new ContentValidationError("INVALID_ATTACHMENT", "图片节点不能包含子节点");
       const id = node.attrs?.attachmentId;
       const src = node.attrs?.src;
@@ -135,6 +156,19 @@ export function validateAndDeriveContent(input: unknown, schemaVersion = 5): Der
       }
       attachments.add(id);
       return "";
+    }
+    if (node.type === "noteLink") {
+      if (schemaVersion < SCHEMA_FEATURE.noteLink) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "笔记互链需要新版客户端");
+      const parsed = noteLinkAttributes.safeParse(node.attrs);
+      if (!parsed.success || node.content !== undefined || node.marks !== undefined || ancestors.includes("codeBlock") || !["paragraph", "heading"].includes(ancestors.at(-1) ?? "")) throw new ContentValidationError("INVALID_NOTE_LINK", "笔记链接属性或位置无效");
+      textParts.push(parsed.data.title); return parsed.data.title;
+    }
+    if (node.type === "label") {
+      if (schemaVersion < SCHEMA_FEATURE.label) throw new ContentValidationError("UNSUPPORTED_CONTENT_SCHEMA", "标签需要新版客户端");
+      const parsed = labelAttributes.safeParse(node.attrs);
+      if (!parsed.success || node.content !== undefined || node.marks !== undefined || ancestors.includes("codeBlock") || !["paragraph", "heading"].includes(ancestors.at(-1) ?? "")) throw new ContentValidationError("INVALID_LABEL", "标签内容、颜色或位置无效");
+      if (parsed.data.text !== node.attrs?.text) throw new ContentValidationError("INVALID_LABEL", "标签文字需要 NFC 规范化");
+      textParts.push(parsed.data.text); return parsed.data.text;
     }
     if (node.type === "text") {
       if (typeof node.text !== "string") throw new ContentValidationError("INVALID_CONTENT", "文本节点缺少内容");

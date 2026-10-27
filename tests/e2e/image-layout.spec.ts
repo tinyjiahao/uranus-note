@@ -7,7 +7,7 @@ async function upload(page: Page, width = 120) {
     const context = canvas.getContext("2d")!; context.fillStyle = "#e0b020"; context.fillRect(0, 0, width, 80);
     return canvas.toDataURL("image/png").split(",")[1]!;
   }, width);
-  await page.locator('.file-tool input[type="file"]').setInputFiles({ name: "layout.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") });
+  await page.locator('.file-tool[aria-label="上传图片"] input[type="file"]').setInputFiles({ name: "layout.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") });
 }
 test("images align independently in body and table cells and persist in readonly", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });

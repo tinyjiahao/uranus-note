@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./fixtures";
 // This suite verifies the production 30s default, not the general 5s fixture.
 import { expect, test, type Page } from "@playwright/test";
 import { testEmail, testPassword } from "./credentials";
@@ -41,7 +42,7 @@ test("local draft, configurable remote sync, and settings blur remain separate",
     request.onerror = () => reject(request.error);
   }), { id: noteId, userId });
   expect(JSON.stringify(draft.content)).toContain("先保存本机的正文");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click();
   const interval = page.getByLabel("远程同步间隔（秒）");
   await expect(interval).toHaveValue("30");
   expect(patches).toHaveLength(0);
@@ -67,7 +68,7 @@ test("shortcut and switching notes flush before the remote interval", async ({ p
 
 test("offline draft retries on reconnect without losing edits", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByLabel("远程同步间隔（秒）").fill("5");
   await page.getByRole("button", { name: "关闭设置", exact: true }).click();
   await page.route("**/api/notes/*", route => route.request().method() === "PATCH" ? route.abort() : route.continue());

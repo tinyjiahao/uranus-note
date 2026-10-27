@@ -1,17 +1,18 @@
+import { contentSchemaVersionSchema } from "./schemaVersion";
 import { z } from "zod";
 
 export const operationIdSchema = z.string().uuid();
 export const createNoteSchema = z.object({
   operation_id: operationIdSchema,
   folder_id: z.number().int().positive().optional(),
-  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).default(1),
+  content_schema_version: contentSchemaVersionSchema.default(1),
   content: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const patchNoteSchema = z.object({
   operation_id: operationIdSchema,
   expected_revision: z.number().int().positive(),
-  content_schema_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+  content_schema_version: contentSchemaVersionSchema.optional(),
   content: z.record(z.string(), z.unknown()).optional(),
   folder_id: z.number().int().positive().optional(),
   pinned: z.boolean().optional(),

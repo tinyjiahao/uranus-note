@@ -1,5 +1,11 @@
 import { test as base } from "@playwright/test";
+import type { Page } from "@playwright/test";
 export { expect, type Page } from "@playwright/test";
+
+export async function openWorkspaceMenu(page: Page) {
+  if (await page.getByRole("button", { name: "设置", exact: true }).isVisible()) return;
+  await page.getByRole("button", { name: /^(笔记更多|更多)$/ }).click();
+}
 
 // Each local browser test represents a distinct client. This avoids unrelated
 // tests consuming the same ten-per-minute login budget. Production rate-limit

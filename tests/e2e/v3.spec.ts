@@ -65,11 +65,11 @@ test("v3 menu targets another note, sort and search do not mutate current conten
   await expect(page.getByRole("textbox", { name: "搜索标题和正文" })).toHaveValue(title.toUpperCase());
   await expect(page.getByRole("button", { name: "笔记排序" })).toContainText("标题");
 });
-test("v3 flat toolbar order, narrow sheet and readonly keep independent actions", async ({ page }) => {
+test("grouped toolbar order, narrow sheet and readonly preserve access", async ({ page }) => {
   await open(page);
   const toolbar = page.locator(".format-toolbar");
   const order = await toolbar.locator("button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label")));
-  const originalOrder = ["撤销", "重做", "标题 1", "标题 2", "加粗", "斜体", "下划线", "删除线", "高亮", "行内代码", "靠左对齐", "居中对齐", "靠右对齐"];
+  const originalOrder = ["撤销", "重做", "段落样式", "加粗", "斜体", "下划线", "文本颜色与突出显示", "靠左对齐", "居中对齐", "靠右对齐", "无序列表", "有序列表", "待办", "链接", "表格", "更多格式与插入"];
   expect(order.filter(label => originalOrder.includes(label ?? ""))).toEqual(originalOrder);
   for (const width of [320, 375, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 800 });

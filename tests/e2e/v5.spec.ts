@@ -16,8 +16,8 @@ for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTabl
   const increase = page.getByRole("button", { name: "增加缩进", exact: true });
   const decrease = page.getByRole("button", { name: "减少缩进", exact: true });
   await editor.click();
-  await expect(increase).toBeDisabled();
-  await expect(decrease).toBeDisabled();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await expect(increase).toBeDisabled();
+  await expect(decrease).toBeDisabled(); await page.keyboard.press("Escape");
   if (inTable) {
     await page.getByRole("button", { name: "表格", exact: true }).click();
     await page.getByRole("button", { name: "2 行 2 列", exact: true }).click();
@@ -26,15 +26,15 @@ for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTabl
   const scope = inTable ? editor.locator("td").first() : editor;
   await page.getByRole("button", { name: kind, exact: true }).click();
   await page.keyboard.insertText("第一项");
-  await expect(increase).toBeDisabled();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await expect(increase).toBeDisabled(); await page.keyboard.press("Escape"); await editor.focus();
   await page.keyboard.press("Enter");
   await page.keyboard.insertText("第二项");
-  await increase.click();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await increase.click();
   await expect(scope.locator("li li p")).toHaveText("第二项");
-  await decrease.click();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await decrease.click();
   await expect(scope.locator("li li")).toHaveCount(0);
   await expect(scope.locator("li")).toHaveCount(2);
-  await increase.click();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await increase.click();
   await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(scope.locator("li li")).toHaveCount(0);
   await page.getByRole("button", { name: "重做", exact: true }).click();
@@ -45,8 +45,7 @@ for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTabl
   await expect(scope.locator("li li p")).toHaveText("第二项");
   await scope.locator("li li p").click();
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
-  await expect(increase).toBeDisabled();
-  await expect(decrease).toBeDisabled();
+  await expect(page.getByRole("button", { name: "更多格式与插入", exact: true })).toBeDisabled();
 });
 
 test("ordered list markers cycle by indentation depth", async ({ page }) => {
@@ -59,7 +58,7 @@ test("ordered list markers cycle by indentation depth", async ({ page }) => {
   for (const text of ["二级", "三级", "四级"]) {
     await page.keyboard.press("Enter");
     await page.keyboard.insertText(text);
-    await increase.click();
+    await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await increase.click();
   }
 
   await expect(editor.locator("ol")).toHaveCount(4);
@@ -99,7 +98,7 @@ test("search arrows relocate a single match inside a long code block", async ({ 
   await open(page);
   const editor = page.locator(".prose-editor");
   await editor.click();
-  await page.getByRole("button", { name: "代码块", exact: true }).click();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "代码块", exact: true }).click();
   await page.keyboard.insertText(["唯一搜索目标", ...Array.from({ length: 150 }, (_, i) => `内容行 ${i}`)].join("\n"));
   await page.keyboard.press("ControlOrMeta+f");
   const input = page.getByPlaceholder("在笔记中查找");
@@ -161,6 +160,7 @@ test("dark theme separates table headers and quotes from the editor background",
   await open(page);
   const editor = page.locator(".prose-editor");
   await editor.click();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click();
   await page.getByRole("button", { name: "引用", exact: true }).click();
   await page.keyboard.insertText("深色引用");
   await page.keyboard.press("Enter");
@@ -192,6 +192,7 @@ test("v5 shortcut save, cross-mark find, semantic small text and link dialog per
 
   await editor.click(); await page.keyboard.press("End"); await page.keyboard.press("Enter"); await page.keyboard.insertText("小号链接");
   for (let index = 0; index < 4; index++) await page.keyboard.press("Shift+ArrowLeft");
+  await page.getByRole("button", { name: "段落样式", exact: true }).click();
   await page.getByRole("button", { name: "小号文本", exact: true }).click();
   await expect(editor.locator("small")).toContainText("链接");
   await page.getByRole("button", { name: "链接", exact: true }).click();
@@ -210,9 +211,12 @@ test("v5 shortcut save, cross-mark find, semantic small text and link dialog per
 
 test("v5 code block toolbar keeps indentation and exits inside the current container", async ({ page }) => {
   await open(page); const editor = page.locator(".prose-editor"); await editor.click();
-  await page.keyboard.insertText("const value = 1"); await page.getByRole("button", { name: "代码块", exact: true }).click();
+  await page.keyboard.insertText("const value = 1"); await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "代码块", exact: true }).click();
   await expect(editor.locator("pre")).toContainText("const value = 1");
+  await page.getByRole("button", { name: "段落样式", exact: true }).click();
   await expect(page.getByRole("button", { name: "小号文本", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await editor.locator("pre").click();
   await page.keyboard.press("End"); await page.keyboard.press("Tab"); await page.keyboard.insertText("// indented");
   await expect(editor.locator("pre")).toContainText("  // indented");
   await page.keyboard.press("Meta+Enter"); await page.keyboard.insertText("代码块后");
@@ -224,8 +228,14 @@ test("v5 code block toolbar keeps indentation and exits inside the current conta
 test("v5 table rich blocks remain rectangular and row numbers are UI-only", async ({ page }) => {
   await open(page);
   const editor = page.locator(".prose-editor");
+  await editor.fill("表格上方内容");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await page.getByRole("button", { name: "表格", exact: true }).click();
   await page.getByRole("button", { name: "2 行 2 列", exact: true }).click();
+  const gap = await editor.locator(".tableWrapper").evaluate(wrapper => wrapper.querySelector("table")!.getBoundingClientRect().top - wrapper.previousElementSibling!.getBoundingClientRect().bottom);
+  expect(gap).toBeGreaterThanOrEqual(0);
+  expect(gap).toBeLessThanOrEqual(30);
   const first = editor.locator("th").first();
   await first.click(); await page.keyboard.insertText("单元格列表");
   await page.getByRole("button", { name: "无序列表", exact: true }).click();
@@ -233,13 +243,17 @@ test("v5 table rich blocks remain rectangular and row numbers are UI-only", asyn
   await editor.locator(".tableWrapper").hover();
   await page.getByRole("button", { name: "表格菜单", exact: true }).click();
   await page.getByRole("button", { name: "显示行号", exact: true }).click();
-  await expect(editor.locator(".table-row-numbers span")).toHaveCount(2);
+  await expect(editor.locator(".table-row-numbers span")).toHaveText(["1"]);
   await page.getByRole("button", { name: "关闭菜单" }).click();
   await expect(page.locator(".save-state")).toContainText("已保存到服务器");
   await page.reload();
   await expect(editor.locator("tr")).toHaveCount(2);
   await expect(editor.locator("ul")).toContainText("单元格列表");
-  await expect(editor.locator(".table-row-numbers span")).toHaveCount(2);
+  await expect(editor.locator(".table-row-numbers span")).toHaveText(["1"]);
+  await editor.locator(".tableWrapper").hover();
+  await page.getByRole("button", { name: "表格菜单", exact: true }).click();
+  await page.getByRole("button", { name: "表头开关", exact: true }).click();
+  await expect(editor.locator(".table-row-numbers span")).toHaveText(["1", "2"]);
 });
 
 test("v5 external table paste pads short rows and rejects merged cells before editing", async ({ page }) => {

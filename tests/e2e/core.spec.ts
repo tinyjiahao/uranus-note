@@ -5,7 +5,7 @@ test("login, edit, persist and search a note", async ({ page }) => {
   const title = `端到端测试-${Date.now()}`;
   await page.goto("/login");
   await page.getByLabel("邮箱", { exact: true }).fill(testEmail()); await page.getByLabel("密码", { exact: true }).fill(testPassword());
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.getByTitle("新建笔记 (⌘N)").click();
   await expect(page).toHaveURL(/\/notes\/\d+$/);

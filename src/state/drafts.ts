@@ -1,7 +1,8 @@
+import { type ContentSchemaVersion } from "../../shared/schemaVersion";
 import type { ContentNode } from "../../shared/dto";
 import { identity } from "./identity";
 
-export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: 1 | 2 | 3 | 4 | 5; editSequence: number; updatedAt: number; content: ContentNode; legacy?: boolean };
+export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: ContentSchemaVersion; editSequence: number; updatedAt: number; content: ContentNode; legacy?: boolean };
 const DB_NAME = "uranus-drafts";
 const STORE = "drafts";
 

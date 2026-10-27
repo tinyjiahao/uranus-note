@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./fixtures";
 import { test, expect, type Page } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 
@@ -19,10 +20,11 @@ test("width, settings, selection, responsive layout and sorting preserve the edi
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(before);
   expect((await editor.boundingBox())!.width).toBeLessThanOrEqual(860);
   const settings = page.getByRole("button", { name: "设置", exact: true });
+  await openWorkspaceMenu(page);
   await expect(settings).toHaveCount(1);
-  await expect(settings.locator("svg")).toHaveCSS("width", "18px");
-  await expect(settings.locator("svg")).toHaveCSS("height", "18px");
-  await settings.click();
+  await expect(settings.locator("svg")).toHaveCSS("width", "16px");
+  await expect(settings.locator("svg")).toHaveCSS("height", "16px");
+  await openWorkspaceMenu(page); await settings.click();
   await page.getByLabel("编辑宽度").selectOption("fluid");
   await page.getByLabel("关闭设置").click();
   await expect(editor).toContainText("v2 宽度测试");
@@ -32,10 +34,9 @@ test("width, settings, selection, responsive layout and sorting preserve the edi
   await page.getByRole("button", { name: "关闭菜单" }).click();
   expect(patches).toBe(0);
   for (const layout of ["two", "focus", "three"]) {
-    await settings.click(); await page.getByLabel("布局", { exact: true }).selectOption(layout); await page.getByLabel("关闭设置").click();
-    await expect(settings).toHaveCount(1);
-    await expect(settings).toBeVisible();
-    await expect(settings).toBeFocused();
+    await openWorkspaceMenu(page); await settings.click(); await page.getByLabel("布局", { exact: true }).selectOption(layout); await page.getByLabel("关闭设置").click();
+    await expect(settings).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "笔记更多", exact: true })).toBeFocused();
     const panel = (await page.locator(".editor-panel").boundingBox())!;
     expect((await editor.boundingBox())!.width).toBeCloseTo(panel.width, 0);
   }
@@ -46,8 +47,8 @@ test("width, settings, selection, responsive layout and sorting preserve the edi
     expect(content.width).toBeCloseTo(panel.width, 0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
   }
-  await settings.click(); await expect(page.getByRole("dialog")).toBeVisible(); await page.keyboard.press("Escape");
-  await expect(settings).toBeFocused();
+  await openWorkspaceMenu(page); await settings.click(); await expect(page.getByRole("dialog")).toBeVisible(); await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "笔记更多", exact: true })).toBeFocused();
   await page.getByLabel("返回笔记列表").click(); await expect(page.locator(".note-list-panel")).toBeVisible();
   await expect(page.getByRole("button", { name: "笔记排序" })).toContainText("标题");
 });
@@ -55,7 +56,7 @@ test("width, settings, selection, responsive layout and sorting preserve the edi
 test("settings selects keep their complete labels visible at narrow widths", async ({ page }) => {
   await page.setViewportSize({ width: 420, height: 800 });
   await openNew(page);
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click();
   const drawer = page.locator(".settings-drawer");
   const selects = drawer.locator("select");
   await expect(selects).toHaveCount(4);
@@ -186,7 +187,7 @@ test("table edge handles insert in place and row menus preserve selection", asyn
   await page.getByRole("button", { name: "在第 3 行位置插入", exact: true }).focus();
   await page.screenshot({ path: "test-results/table-edge-desktop.png" });
   await expect(page.locator(".table-add-row, .table-add-column")).toHaveCount(0);
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByLabel("主题", { exact: true }).selectOption("dark");
   await page.getByLabel("关闭设置").click();
   await editor.locator(".tableWrapper").hover();
@@ -224,7 +225,7 @@ test("failed IndexedDB and network expose manual copy, and failed preferences re
   await expect(page.locator(".save-state")).toContainText("内容尚未安全保存", { timeout: 12_000 });
   await page.getByRole("button", { name: "复制未保存内容" }).click();
   await expect(page.getByLabel("未保存内容", { exact: true })).toContainText("需要手工保存");
-  await page.getByRole("button", { name: "设置", exact: true }).click(); await page.getByLabel("编辑宽度").selectOption("reading");
+  await openWorkspaceMenu(page); await page.getByRole("button", { name: "设置", exact: true }).click(); await page.getByLabel("编辑宽度").selectOption("reading");
   await expect(page.getByRole("dialog")).toContainText("无法记忆偏好"); await page.keyboard.press("Escape");
   await expect(page.locator(".editor-shell")).toHaveClass(/width-reading/);
 });

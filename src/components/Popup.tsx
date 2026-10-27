@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type ClipboardEventHandler } from "react";
 import { createPortal } from "react-dom";
 
 export type PopupAnchor = HTMLElement | { left: number; top: number; bottom: number; right: number; element?: HTMLElement; originLeft?: number; originTop?: number };
@@ -8,8 +8,10 @@ export function pointAnchor(element: HTMLElement, x: number, y: number): PopupAn
 }
 // One root popup across editor, list and settings. Subpanels stay in the same root.
 export function closePopups() { window.dispatchEvent(new Event("uranus-close-popups")); }
-export function Popup({ anchor, title, close, children, back, restoreFocus, className = "" }: {
+export function Popup({ anchor, title, close, children, back, restoreFocus, className = "", placement = "bottom", onCopy }: {
   anchor: PopupAnchor; title: string; close: () => void; children: ReactNode; back?: (() => void) | undefined; restoreFocus?: (() => void) | undefined; className?: string;
+  placement?: "top" | "bottom";
+  onCopy?: ClipboardEventHandler<HTMLDivElement>;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -48,7 +50,8 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
         rect = { left: anchor.left + dx, right: anchor.right + dx, top: anchor.top + dy, bottom: anchor.bottom + dy };
       }
       if (anchorElement && targetRect && (!anchorElement.isConnected || targetRect.bottom < y || targetRect.top > y + height || targetRect.right < x || targetRect.left > x + width)) { dismiss(); return; }
-      setPosition({ left: Math.max(x + 8, Math.min(rect.left, x + width - panel.offsetWidth - 8)), top: Math.max(y + 8, Math.min(rect.bottom + 6, y + height - panel.offsetHeight - 8)) });
+      const top = placement === "top" && rect.top - panel.offsetHeight - 6 >= y + 8 ? rect.top - panel.offsetHeight - 6 : rect.bottom + 6;
+      setPosition({ left: Math.max(x + 8, Math.min(rect.left, x + width - panel.offsetWidth - 8)), top: Math.max(y + 8, Math.min(top, y + height - panel.offsetHeight - 8)) });
     };
     place();
     (panel.querySelector<HTMLElement>("[data-initial-focus]") ?? panel.querySelector<HTMLElement>("button:not(:disabled),input,select"))?.focus({ preventScroll: true });
@@ -73,7 +76,7 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
       window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true);
       window.visualViewport?.removeEventListener("resize", place); window.visualViewport?.removeEventListener("scroll", place);
     };
-  }, [anchor]);
+  }, [anchor, placement]);
   useLayoutEffect(() => {
     const panel = root.current;
     // A subpanel can remove the focused input/button. Keep keyboard navigation
@@ -82,7 +85,7 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
       (panel.querySelector<HTMLElement>("[data-initial-focus]") ?? panel.querySelector<HTMLElement>(".object-popup-content button:not(:disabled),.object-popup-content input"))?.focus({ preventScroll: true });
     }
   });
-  return createPortal(<><div className="popup-backdrop" aria-hidden="true" onClick={close} /><div className={`object-popup ${className}`} ref={root} role="dialog" aria-label={title} style={position} onKeyDown={event => {
+  return createPortal(<><div className="popup-backdrop" aria-hidden="true" onClick={close} /><div className={`object-popup ${className}`} ref={root} role="dialog" aria-label={title} style={position} onCopy={onCopy} onKeyDown={event => {
     if (event.nativeEvent.isComposing) return;
     const target = event.target as HTMLElement;
     if (event.key === "Tab" && matchMedia("(max-width: 767px)").matches) {

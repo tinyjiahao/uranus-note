@@ -1,3 +1,4 @@
+import { type ContentSchemaVersion } from "./schemaVersion";
 export type ContentNode = {
   type?: string;
   text?: string;
@@ -22,7 +23,7 @@ export type NoteListItem = {
 
 export type NoteDetail = NoteListItem & {
   content: ContentNode;
-  contentSchemaVersion: 1 | 2 | 3 | 4 | 5;
+  contentSchemaVersion: ContentSchemaVersion;
 };
 
 export type FolderDto = {
@@ -45,4 +46,4 @@ export type OperationReceipt = {
 };
 
 export const EMPTY_CONTENT: ContentNode = { type: "doc", content: [{ type: "paragraph" }] };
-export const CONTENT_SCHEMA_VERSION = 5 as const;
+export { CURRENT_SCHEMA_VERSION as CONTENT_SCHEMA_VERSION } from "./schemaVersion";

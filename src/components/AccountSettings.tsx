@@ -33,18 +33,18 @@ export function AccountSettings({ user, beforeSensitiveChange }: { user: Account
     finally { setBusy(false); }
   };
   const fieldError = (name: string) => errors[name] && <small role="alert">{errors[name]}</small>;
-  return <details><summary>账号与安全</summary>
+  return <details className="account-settings"><summary>账号与安全</summary>
     <p>用户名：{account.data?.username ?? user.username}</p><p>当前邮箱：{account.data?.email ?? user.email}</p>
     <p>邮箱仅作为登录账号，暂未验证。暂不支持自助找回密码。</p>
-    <div>{(["username", "email", "password"] as const).map((value, i) => <button key={value} disabled={busy} aria-pressed={mode === value} onClick={() => { setMode(value); setErrors({}); setMessage(""); setCurrentPassword(""); setPassword(""); setConfirmPassword(""); }}>{["修改用户名", "修改邮箱", "修改密码"][i]}</button>)}</div>
+    <div className="account-mode-switch" role="group" aria-label="账号修改项目">{(["username", "email", "password"] as const).map((value, i) => <button key={value} disabled={busy} aria-pressed={mode === value} onClick={() => { setMode(value); setErrors({}); setMessage(""); setCurrentPassword(""); setPassword(""); setConfirmPassword(""); }}>{["修改用户名", "修改邮箱", "修改密码"][i]}</button>)}</div>
     <form className="account-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       {mode === "username" ? <><label>用户名<input value={username} autoComplete="nickname" onChange={e => setUsername(e.target.value)} required /></label>{fieldError("username")}</> : <>
         {mode === "email" && <><label>新邮箱<input type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required /></label>{fieldError("email")}<p>保存后需使用新邮箱重新登录，不会发送验证邮件。</p></>}
         <label>当前密码<input type={visible ? "text" : "password"} autoComplete="current-password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required /></label>{fieldError("currentPassword")}
         {mode === "password" && <><label>新密码<input type={visible ? "text" : "password"} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>{fieldError("password")}<label>确认密码<input type={visible ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required /></label>{fieldError("confirmPassword")}</>}
-        <label><input type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />显示密码</label>
+        <label className="account-password-visibility"><input type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />显示密码</label>
       </>}
-      {message && <p role="status">{message}</p>}<button type="submit" disabled={busy}>{busy ? "正在保存…" : "保存账号设置"}</button>
+      {message && <p role="status">{message}</p>}<button className="primary" type="submit" disabled={busy}>{busy ? "正在保存…" : "保存账号设置"}</button>
     </form>
   </details>;
 }

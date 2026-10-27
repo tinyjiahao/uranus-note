@@ -70,6 +70,18 @@ it("authorizes downloads before ETag and rejects cross-user copy, upload and del
   expect((await downloadAttachment(db, env.UPLOADS, image.id, undefined, b)).object).not.toBeNull();
 });
 
+it("keeps file attachments and note-link target reads private across users", async () => {
+  const na = await note(a), nb = await note(b, "B private link target");
+  const file = await uploadAttachment(db, env.UPLOADS, nb.id, uuidv7(), new File(["%PDF-1.7"], "private.pdf", { type: "application/pdf" }), b);
+  await expect(downloadAttachment(db, env.UPLOADS, file.id, file.etag!, a)).rejects.toMatchObject({ status: 404 });
+  await expect(copyAttachment(db, env.UPLOADS, file.id, na.id, uuidv7(), a)).rejects.toMatchObject({ status: 404 });
+  const content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "noteLink", attrs: { noteId: nb.id, title: "user supplied snapshot" } }] }] };
+  // Storing an unavailable target is allowed, but never resolves its private title.
+  expect((await patchNote(db, na.id, { operation_id: uuidv7(), expected_revision: na.revision, content_schema_version: 8, content }, a)).note.content).toEqual(content);
+  await expect(getNote(db, nb.id, a)).rejects.toMatchObject({ status: 404 });
+  expect((await listNotes(db, { q: "B private link target" }, a)).items).toHaveLength(0);
+});
+
 it("keeps empty-trash jobs and child deletion within the initiating user's scope", async () => {
   const na = await note(a), nb = await note(b);
   await changeDeletedState(db, na.id, { operation_id: uuidv7(), expected_revision: 1 }, false, a);

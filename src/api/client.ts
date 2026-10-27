@@ -1,3 +1,4 @@
+import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
 import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, PageDto } from "../../shared/dto";
 import type { AccountIdentity } from "../../shared/account";
 import { activateIdentity, identity, identityMatches, lockIdentity, notifyAccountChange, trackRequest } from "../state/identity";
@@ -11,7 +12,7 @@ export class ApiClientError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const expected = identity();
-  if (!expected.userId && !["/api/session", "/api/register"].includes(path)) throw new ApiClientError(401, "UNAUTHENTICATED", "请重新登录");
+  if (!expected.userId && !["/api/session", "/api/register", "/api/account/switch", "/api/account/sessions"].includes(path)) throw new ApiClientError(401, "UNAUTHENTICATED", "请重新登录");
   const controller = new AbortController();
   const untrack = trackRequest(controller);
   const headers = new Headers(init.headers);
@@ -45,6 +46,13 @@ export async function login(email: string, password: string): Promise<Session> {
   return session;
 }
 export async function logout() { const result = await request<Session>("/api/session", { method: "DELETE" }); setCsrfToken(""); lockIdentity(true); return result; }
+export const rememberedAccounts = () => request<{ accounts: { user: AccountIdentity; expiresAt: number; current: boolean }[]; limit: number; switchToken: string }>("/api/account/sessions");
+export const forgetAccount = (userId: string) => request("/api/account/forget", { method: "POST", body: JSON.stringify({ userId }) });
+export async function switchAccount(userId: string, switchToken: string) {
+  const session = await request<Session>("/api/account/switch", { method: "POST", headers: { "X-Account-Switch-Token": switchToken }, body: JSON.stringify({ userId }) });
+  setCsrfToken(session.csrfToken ?? ""); activateIdentity(session.user?.id ?? null); notifyAccountChange();
+  return session;
+}
 export const register = (input: unknown) => request<{ registered: boolean; email: string }>("/api/register", { method: "POST", body: JSON.stringify(input) });
 export const getAccount = () => request<AccountIdentity>("/api/account");
 export const renameAccount = (username: string) => request<AccountIdentity>("/api/account", { method: "PATCH", body: JSON.stringify({ username }) });
@@ -66,16 +74,16 @@ export function listNotes(filters: NoteFilters = {}, page = 1, signal?: AbortSig
   if (filters.q?.trim()) params.set("q", filters.q.trim());
   return request<PageDto<NoteListItem>>(`/api/notes?${params}`, signal ? { signal } : {});
 }
-export const getNote = (id: number) => request<NoteDetail>(`/api/notes/${id}`);
+export const getNote = (id: number, signal?: AbortSignal) => request<NoteDetail>(`/api/notes/${id}`, signal ? { signal } : {});
 export const createNote = (folderId?: number) => request<NoteDetail>("/api/notes", {
-  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), ...(folderId ? { folder_id: folderId } : {}), content_schema_version: 5 }),
+  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), ...(folderId ? { folder_id: folderId } : {}), content_schema_version: CURRENT_SCHEMA_VERSION }),
 });
 export const createNoteWithContent = (folderId: number, content: Record<string, unknown>) => request<NoteDetail>("/api/notes", {
-  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), folder_id: folderId, content_schema_version: 5, content }),
+  method: "POST", body: JSON.stringify({ operation_id: uuidv7(), folder_id: folderId, content_schema_version: CURRENT_SCHEMA_VERSION, content }),
 });
 export type NotePatch = { content?: Record<string, unknown>; folder_id?: number; pinned?: boolean; starred?: boolean };
 export const patchNote = (id: number, revision: number, patch: NotePatch, keepalive = false, operationId = uuidv7()) => request<{ note: NoteDetail; operation_id: string; applied_revision: number }>(`/api/notes/${id}`, {
-  method: "PATCH", keepalive, body: JSON.stringify({ operation_id: operationId, expected_revision: revision, content_schema_version: 5, ...patch }),
+  method: "PATCH", keepalive, body: JSON.stringify({ operation_id: operationId, expected_revision: revision, content_schema_version: CURRENT_SCHEMA_VERSION, ...patch }),
 });
 export const removeNote = (id: number, revision: number) => request<NoteDetail>(`/api/notes/${id}`, { method: "DELETE", body: JSON.stringify({ operation_id: uuidv7(), expected_revision: revision }) });
 export const restoreNote = (id: number, revision: number) => request<NoteDetail>(`/api/notes/${id}/restore`, { method: "POST", body: JSON.stringify({ operation_id: uuidv7(), expected_revision: revision }) });
@@ -89,6 +97,24 @@ export const getVersion = (id: number, versionId: number) => request<Record<stri
 export const createVersion = (id: number) => request<Record<string, unknown>>(`/api/notes/${id}/versions`, { method: "POST", body: JSON.stringify({ operation_id: uuidv7() }) });
 export const restoreVersion = (id: number, versionId: number, revision: number) => request<NoteDetail>(`/api/notes/${id}/versions/${versionId}/restore`, { method: "POST", body: JSON.stringify({ operation_id: uuidv7(), expected_revision: revision }) });
 export type AttachmentDto = { id: string; noteId: number; fileName: string; mime: string; size: number; etag: string | null; url: string };
+export async function downloadAttachmentBytes(id: string, signal: AbortSignal, budget: number) {
+  const expected = identity(), controller = new AbortController(), untrack = trackRequest(controller);
+  if (!expected.userId) { untrack(); throw new Error("请先登录"); }
+  try {
+    const response = await fetch(`/api/attachments/${encodeURIComponent(id)}`, { credentials: "same-origin", signal: AbortSignal.any([signal, controller.signal]) });
+    if (!response.ok || !response.body) throw new Error(`附件不可用 (${response.status})`);
+    if (Number(response.headers.get("Content-Length")) > budget) { await response.body.cancel(); throw new Error("超过导出体积上限"); }
+    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let length = 0;
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      length += value.length; if (length > budget) { await reader.cancel(); throw new Error("超过导出体积上限"); } chunks.push(value);
+    }
+    if (!identityMatches(expected)) throw new Error("账号状态已变化");
+    const result = new Uint8Array(length); let offset = 0;
+    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+    return result;
+  } finally { untrack(); }
+}
 export async function uploadAttachment(noteId: number, file: File): Promise<AttachmentDto> {
   const form = new FormData();
   form.set("note_id", String(noteId));

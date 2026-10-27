@@ -24,13 +24,15 @@ attachmentRoutes.post("/", async (c) => {
 
 attachmentRoutes.get("/:id", async (c) => {
   const result = await downloadAttachment(c.env.DB, c.env.UPLOADS, c.req.param("id"), c.req.header("If-None-Match"), c.get("accountSession"));
-  if (result.notModified) return new Response(null, { status: 304, headers: { "Cache-Control": "private, no-cache", ETag: result.row.etag ?? "" } });
+  const image = result.row.mime.startsWith("image/");
   const headers = new Headers({
     "Content-Type": result.row.mime, "Content-Length": String(result.row.size),
-    "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(result.row.file_name)}`,
-    "Cache-Control": "private, no-cache", "X-Content-Type-Options": "nosniff",
+    "Content-Disposition": `${image ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(result.row.file_name)}`,
+    "Cache-Control": "private, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff",
   });
   if (result.row.etag) headers.set("ETag", result.row.etag);
+  if (!image) headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
+  if (result.notModified) { headers.delete("Content-Length"); return new Response(null, { status: 304, headers }); }
   return new Response(result.object!.body, { headers });
 });
 

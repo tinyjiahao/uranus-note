@@ -1,3 +1,4 @@
+import { openWorkspaceMenu } from "./fixtures";
 import { expect, test } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 
@@ -11,7 +12,7 @@ test("editor font size is a persistent local preference, not a content edit", as
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible();
   let patches = 0; page.on("request", r => { if (r.method() === "PATCH") patches++; });
   const settings = page.getByRole("button", { name: "设置", exact: true });
-  await settings.click();
+  await openWorkspaceMenu(page); await settings.click();
   for (const size of [16, 18, 20, 14, 18]) {
     await page.getByLabel("编辑器字号").selectOption(String(size));
     await expect(editor).toHaveCSS("font-size", `${size}px`);
@@ -21,7 +22,7 @@ test("editor font size is a persistent local preference, not a content edit", as
   await page.reload();
   await expect(editor).toHaveCSS("font-size", "18px");
   await page.getByRole("button", { name: "只读模式", exact: true }).click();
-  await settings.click(); await page.getByLabel("编辑器字号").selectOption("20");
+  await openWorkspaceMenu(page); await settings.click(); await page.getByLabel("编辑器字号").selectOption("20");
   await expect(editor).toHaveCSS("font-size", "20px");
   page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "恢复默认偏好" }).click();

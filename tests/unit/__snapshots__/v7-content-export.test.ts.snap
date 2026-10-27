@@ -1,0 +1,37 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`exports nodes and marks with explicit safe Markdown degradation 1`] = `
+"# A \\| \\[title\\]
+
+## Section
+
+**bold** *italic*~~gone~~plain  
+[重点]
+
+\`\` a\`b \`\`[link](https://example.com/a%28b%29)
+
+\`\`\`\`js
+\`\`\`
+x
+\`\`\`\`
+
+- item
+
+3. third
+
+- [x] done
+- [ ] todo
+
+> quote
+
+---
+
+|  |
+| --- |
+| a\\|b<br>c |
+
+![same.png](attachments/same-id1.png)
+
+![same.png](attachments/same-id2.png)
+"
+`;

@@ -25,9 +25,9 @@ export function Settings({ onClose, user, beforeSensitiveChange }: { onClose: ()
   const status = useQuery({ queryKey: ["user", user.id, "deployment-status"], queryFn: deploymentStatus });
   useEffect(() => {
     closePopups();
-    const trigger = document.activeElement as HTMLElement | null;
+    const trigger = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     dialog.current?.showModal();
-    return () => { if (trigger?.isConnected) trigger.focus(); else document.querySelector<HTMLButtonElement>('.settings-launcher')?.focus(); };
+    return () => { if (trigger?.isConnected) trigger.focus(); else document.querySelector<HTMLButtonElement>('.note-more, .workspace-more')?.focus(); };
   }, []);
   return <dialog className="settings-drawer" ref={dialog} aria-labelledby="settings-title" onCancel={onClose}>
     <header><h2 id="settings-title">设置</h2><button aria-label="关闭设置" onClick={onClose}>关闭</button></header>
@@ -43,7 +43,7 @@ export function Settings({ onClose, user, beforeSensitiveChange }: { onClose: ()
         setSyncInput(e.target.value);
         const value = Number(e.target.value);
         if (Number.isInteger(value) && value >= 5 && value <= 300) ui.setSyncIntervalSeconds(value);
-      }} onBlur={() => setSyncInput(String(ui.syncIntervalSeconds))} style={{ width: 90 }} /></label>
+      }} onBlur={() => setSyncInput(String(ui.syncIntervalSeconds))} /></label>
       <p>默认 30 秒，可设为 5–300 秒。停止输入 0.8 秒后存入本机草稿，持续输入时最多每 3 秒存一次；有改动时按此间隔同步。切换笔记或按 ⌘/Ctrl+S 立即同步。未同步内容仅保存在此浏览器。</p>
       <button onClick={() => { if (confirm("恢复布局、主题、宽度、字号、排序和同步间隔的默认偏好？笔记和草稿将保留。")) ui.reset(); }}>恢复默认偏好</button>
     </section>

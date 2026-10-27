@@ -12,5 +12,7 @@ export const requestContext = createMiddleware<{ Bindings: Env; Variables: AppVa
   if (new URL(c.req.url).protocol === "https:" && c.env.APP_ENV === "production") {
     c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
-  if (c.req.path.startsWith("/api/")) c.header("Cache-Control", "no-store");
+  const privateAttachment = c.req.method === "GET" && /^\/api\/attachments\/[^/]+$/.test(c.req.path)
+    && [200, 304].includes(c.res.status) && c.res.headers.get("Cache-Control") === "private, max-age=31536000, immutable";
+  if (c.req.path.startsWith("/api/") && !privateAttachment) c.header("Cache-Control", "no-store");
 });

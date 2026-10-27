@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import { getSession, login, register, type Session } from "../api/client";
+import { getSession, login, register, switchAccount, type Session } from "../api/client";
+import { AccountSwitcher } from "../components/AccountSwitcher";
 import { loginSchema, registrationSchema } from "../../shared/account";
 import { lockIdentity, identityTabId } from "../state/identity";
 import { Workspace } from "./Workspace";
@@ -17,6 +18,7 @@ function LoginPage({ registrationEnabled = false }: { registrationEnabled?: bool
   const [visible, setVisible] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
+  const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
   const mutation = useMutation({
     mutationFn: async () => {
       const parsed = creating ? registrationSchema.safeParse({ email, username, password, confirmPassword }) : loginSchema.safeParse({ email, password });
@@ -38,13 +40,18 @@ function LoginPage({ registrationEnabled = false }: { registrationEnabled?: bool
       <label htmlFor="password">密码</label><input id="password" type={visible ? "text" : "password"} autoComplete={creating ? "new-password" : "current-password"} value={password} onChange={event => setPassword(event.target.value)} required />
       {errors.password && <small role="alert">{errors.password}</small>}
       {creating && <><label htmlFor="confirm-password">确认密码</label><input id="confirm-password" type={visible ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required />{errors.confirmPassword && <small role="alert">{errors.confirmPassword}</small>}</>}
-      <label><input type="checkbox" checked={visible} onChange={event => setVisible(event.target.checked)} />显示密码</label>
+      <label className="login-password-visibility"><input type="checkbox" checked={visible} onChange={event => setVisible(event.target.checked)} />显示密码</label>
       {notice && <p role="status">{notice}</p>}
       {mutation.error && <div className="error-banner" role="alert">{mutation.error.message}</div>}
       <button className="primary" type="submit" disabled={mutation.isPending}>{mutation.isPending ? "正在处理…" : creating ? "注册" : "登录"}</button>
-      {registrationEnabled ? <button type="button" onClick={() => { setCreating(!creating); setPassword(""); setConfirmPassword(""); setErrors({}); mutation.reset(); }}>{creating ? "返回登录" : "注册账号"}</button> : <small>当前实例未开放注册</small>}
-      <small>邮箱仅作为登录账号，暂未验证。暂不支持自助找回密码，请妥善保存密码。本机草稿不是加密保险箱。</small>
+      {!creating && <button type="button" onClick={event => setAccountAnchor(event.currentTarget)}>切换已登录账号</button>}
+      {registrationEnabled && <button type="button" onClick={() => { setCreating(!creating); setPassword(""); setConfirmPassword(""); setErrors({}); mutation.reset(); }}>{creating ? "返回登录" : "注册账号"}</button>}
     </form>
+    {accountAnchor && <AccountSwitcher anchor={accountAnchor} close={() => setAccountAnchor(null)} change={async target => {
+      if ("userId" in target) await switchAccount(target.userId, target.switchToken);
+      else await login(target.email, target.password);
+      const session = await getSession(); queryClient.clear(); queryClient.setQueryData(["session"], session); navigate("/", { replace: true });
+    }} />}
   </main>;
 }
 

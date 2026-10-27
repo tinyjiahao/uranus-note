@@ -7,7 +7,7 @@ test("image upload uses multipart and remains visible after saving and reloading
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   const response = page.waitForResponse(r => r.url().endsWith("/api/attachments") && r.request().method() === "POST");
-  await page.locator('.file-tool input[type="file"]').setInputFiles({
+  await page.locator('.file-tool[aria-label="上传图片"] input[type="file"]').setInputFiles({
     name: "upload-regression.png", mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
   });
@@ -28,7 +28,7 @@ test("upload failure exposes retry without inserting a broken image", async ({ p
   await page.getByRole("button", { name: "登录", exact: true }).click(); await page.getByTitle("新建笔记 (⌘N)").click();
   await expect(page.locator(".prose-editor")).toBeVisible();
   await page.route("**/api/attachments", route => route.abort("failed"));
-  await page.locator('.file-tool input[type="file"]').setInputFiles({
+  await page.locator('.file-tool[aria-label="上传图片"] input[type="file"]').setInputFiles({
     name: "retry.png", mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
   });

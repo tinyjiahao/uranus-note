@@ -12,6 +12,7 @@ test("paragraph and heading alignment supports selection, undo, persistence and 
   await expect(editor.locator("p").first()).toHaveCSS("text-align", "center");
   await expect(editor.locator("p").last()).toHaveCSS("text-align", "center");
   await editor.locator("p").first().click();
+  await page.getByRole("button", { name: "段落样式", exact: true }).click();
   await page.getByRole("button", { name: "标题 1", exact: true }).click();
   await page.getByRole("button", { name: "靠右对齐", exact: true }).click();
   await expect(editor.locator("h1")).toHaveCSS("text-align", "right");

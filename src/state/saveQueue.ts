@@ -1,3 +1,4 @@
+import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
 import type { ContentNode, NoteDetail } from "../../shared/dto";
 import { patchNote, uuidv7, type NotePatch } from "../api/client";
 import { deleteDraftIfSequence, putDraft } from "./drafts";
@@ -73,7 +74,7 @@ export class NoteSaveQueue {
   }
   private async persist(sequence: number, content: ContentNode) {
     try {
-      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: 5, editSequence: sequence, updatedAt: Date.now(), content }, this.owner.userId);
+      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: CURRENT_SCHEMA_VERSION, editSequence: sequence, updatedAt: Date.now(), content }, this.owner.userId);
       if (sequence <= this.confirmedSequence && this.valid()) { await deleteDraftIfSequence(this.noteId, sequence, this.owner.userId); return; }
       if (stored) { this.localSequence = Math.max(this.localSequence, sequence); if (sequence === this.sequence) this.localError = false; }
       if (sequence === this.sequence) this.report(this.status, undefined, this.lastError);

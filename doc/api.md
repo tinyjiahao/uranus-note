@@ -1,6 +1,6 @@
 # HTTP API
 
-所有业务 API 同源、返回 `Cache-Control: no-store`，认证使用 HttpOnly Cookie。浏览器写请求必须带精确 `Origin` 和登录状态返回的 `X-CSRF-Token`。错误结构为：
+所有业务 API 同源，认证使用 HttpOnly Cookie。除附件 GET 200/304 使用私有强缓存外，API 返回 `Cache-Control: no-store`。浏览器写请求必须带精确 `Origin` 和登录状态返回的 `X-CSRF-Token`。本文描述当前 v7 工作区，生产部署状态见实施记录。错误结构为：
 
 ```json
 {"error":{"code":"REVISION_CONFLICT","message":"笔记已在其他位置更新","requestId":"..."}}
@@ -11,13 +11,18 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/session` | 会话状态和 CSRF token |
-| POST | `/api/session` | `{email,password}` 登录（拒绝旧 token 字段） |
-| DELETE | `/api/session` | 撤销当前会话并清 Cookie |
+| POST | `/api/session` | `{email,password}` 登录并记住账号（最多 5 个）；已有有效活动会话时也要求其 CSRF |
+| DELETE | `/api/session` | 原子撤销本浏览器记住的全部有效会话并清活动/记住账号 Cookie；要求活动会话 CSRF |
+| GET | `/api/account/sessions` | 从 Cookie 验证并返回已登录账号、到期时间、当前状态、limit 及 switchToken；没有有效凭据则空列表，不返回会话凭据 |
+| POST | `/api/account/switch` | `{userId}`，精确 Origin + `X-Account-Switch-Token`；仅切换 Cookie 持有的有效会话，不续期；不要求活动会话仍有效 |
+| POST | `/api/account/forget` | `{userId}`，活动会话 CSRF；仅移除 Cookie 中持有的非当前账号会话，不删除用户或笔记 |
 | POST | `/api/register` | `{email,username,password,confirmPassword}`，默认关闭，100 人硬上限 |
 | GET/PATCH | `/api/account` | 当前账号 / `{username}` 修改名称 |
 | POST | `/api/account/email` | `{email,currentPassword}`；成功撤销全部会话 |
 | POST | `/api/account/password` | `{currentPassword,password,confirmPassword}`；成功撤销全部会话 |
 | GET | `/api/health` | 匿名总体状态 |
+
+当前配置 `SESSION_TTL_SECONDS=86400`。`uranus_session` 为活动凭据，`uranus_accounts` 为最多 5 个独立签名凭据的 HttpOnly Cookie；两者生产均 Secure/SameSite=Strict/Path=/。Cookie 与服务器原始到期时间保持一致，切换不会重新签发或续期。账号列表接口返回的 switchToken 仅用于该 Cookie 账号集合的切换 CSRF，不可作为业务 API 会话凭据；集合变化后须重新获取。
 
 ## 文件夹与笔记
 
@@ -31,7 +36,7 @@
 | POST | `/api/notes/empty-trash` | 创建清空任务 |
 | POST | `/api/import/markdown` | 导入 Markdown 并创建笔记 |
 
-列表查询支持 `folder_id`、`starred=1`、`deleted=1`、`q`、`sort_by`、`sort_dir`、`page`、`pageSize`。PATCH 携带 `expected_revision`、UUIDv7 `operation_id`、当前客户端的 `content_schema_version: 5` 和要修改的字段。服务端兼容读取 schema 1—5，旧客户端不得覆盖较新 schema。
+列表查询支持 `folder_id`、`starred=1`、`deleted=1`、`q`、`sort_by`、`sort_dir`、`page`、`pageSize`。PATCH 携带 `expected_revision`、UUIDv7 `operation_id`、当前客户端的 `content_schema_version: 11` 和要修改的字段。服务端兼容读取 schema 1—11，旧客户端不得覆盖较新 schema；版本常量以 `shared/schemaVersion.ts` 为准。label/fileAttachment/noteLink 分别从版本 6/7/8 开始支持；附件 display 属性从版本 9 开始，表格内文件附件从版本 10 开始，textColor mark 和 highlight 的 color 属性从版本 11 开始，颜色只接受共享白名单。
 
 ## 附件与版本
 
@@ -44,7 +49,9 @@
 | GET | `/api/notes/:id/versions/:vid` | 快照正文 |
 | POST | `/api/notes/:id/versions/:vid/restore` | 原子备份当前正文并恢复 |
 
-附件只接受 PNG/JPEG/WebP/GIF，最大 10,000,000 字节；正文 JSON 最大 1,500,000 UTF-8 字节。
+附件接受 PNG/JPEG/WebP/GIF、PDF、docx/xlsx/pptx、ZIP、TXT/Markdown/CSV（文本须为无 NUL 的合法 UTF-8），具体 MIME 白名单见 `shared/files.ts`。最大 10,000,000 字节、请求体上限 10.5 MB 不变；正文 JSON 最大 1,500,000 UTF-8 字节。
+
+附件 200/304 为 `Cache-Control: private, max-age=31536000, immutable`，ETag 条件判断前执行用户归属校验。图片 inline；其他文件强制 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; sandbox`。本机已缓存副本可能在退出登录或服务端删除后保留，浏览器淘汰时机不保证。
 
 ## 用户级任务与运维
 
