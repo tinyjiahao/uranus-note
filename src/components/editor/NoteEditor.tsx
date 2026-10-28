@@ -7,6 +7,8 @@ import { NoteLinkNode, NoteLinkPopup } from "./noteLinks";
 import { FileSymlink } from "lucide-react";
 import { Tag } from "lucide-react";
 import { installPrintImages } from "./printing";
+import { ImagePreview } from "./ImagePreview";
+import { BlockDrag } from "./blockDrag";
 import { OutlinePopup, headings } from "./OutlinePopup";
 import { ListTree } from "lucide-react";
 import { Plugin } from "@tiptap/pm/state";
@@ -139,6 +141,7 @@ function alignText(editor: Editor, alignment: "left" | "center" | "right") {
 }
 
 function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }: NodeViewProps) {
+  const [preview, setPreview] = useState(false);
   const initial = typeof node.attrs.width === "number" ? node.attrs.width : undefined;
   const [width, setWidth] = useState<number | undefined>(initial);
   const drag = useRef<{ startX: number; startWidth: number; latest: number } | undefined>(undefined);
@@ -157,7 +160,7 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
     <span className="image-frame" draggable data-drag-handle contentEditable={false}>
     <img loading="lazy" decoding="async" src={String(node.attrs.src)} data-attachment-id={String(node.attrs.attachmentId ?? "")} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} onClick={() => {
       const pos = getPos(); if (typeof pos === "number") editor.commands.setNodeSelection(pos);
-    }} />
+    }} title="双击放大图片" onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); setPreview(true); }} />
     {editor.isEditable && <button className="image-resize-handle" aria-label="调整图片宽度" onPointerDown={(event) => {
       event.preventDefault(); event.stopPropagation();
       if (!editor.isEditable) return;
@@ -183,6 +186,7 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", cancel); window.addEventListener("blur", cancel); window.addEventListener("keydown", key);
     }} />}
     {editor.isEditable && selected && <button className="image-menu-button" aria-label="图片操作" aria-haspopup="dialog" onMouseDown={event => event.preventDefault()} onClick={event => openMenu(event.currentTarget)}>•••</button>}
+    {preview && <ImagePreview src={String(node.attrs.src)} alt={String(node.attrs.alt ?? "")} close={() => setPreview(false)} />}
     </span>
   </NodeViewWrapper>;
 }
@@ -261,7 +265,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       "Mod-Shift-r": () => alignText(this.editor, "right"),
     }; } }).configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: null }),
     Link.configure({ openOnClick: false, autolink: true, defaultProtocol: "https", protocols: ["http", "https", "mailto"], HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } }),
-    ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), SearchHighlight, LabelNode, FileAttachment, NoteLinkNode,
+    ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), SearchHighlight, LabelNode, FileAttachment, NoteLinkNode, BlockDrag,
   ], []);
   const options = useMemo(() => ({
     extensions, content: initialParts.body, immediatelyRender: false, shouldRerenderOnTransaction: false,

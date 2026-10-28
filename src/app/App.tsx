@@ -6,6 +6,7 @@ import { AccountSwitcher } from "../components/AccountSwitcher";
 import { loginSchema, registrationSchema } from "../../shared/account";
 import { lockIdentity, identityTabId } from "../state/identity";
 import { Workspace } from "./Workspace";
+import { installSessionActivity } from "../state/sessionActivity";
 
 function LoginPage({ registrationEnabled = false }: { registrationEnabled?: boolean }) {
   const navigate = useNavigate();
@@ -65,6 +66,7 @@ function ProtectedWorkspace() {
 }
 
 export function App() {
+  useEffect(installSessionActivity, []);
   const client = useQueryClient();
   const navigate = useNavigate();
   useEffect(() => {

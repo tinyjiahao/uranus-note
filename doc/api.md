@@ -12,6 +12,7 @@
 | --- | --- | --- |
 | GET | `/api/session` | 会话状态和 CSRF token |
 | POST | `/api/session` | `{email,password}` 登录并记住账号（最多 5 个）；已有有效活动会话时也要求其 CSRF |
+| POST | `/api/session/activity` | 当前会话 CSRF + Origin；按小时条件续期，返回 {expiresAt} 并同步 Cookie；不续期其他账号 |
 | DELETE | `/api/session` | 原子撤销本浏览器记住的全部有效会话并清活动/记住账号 Cookie；要求活动会话 CSRF |
 | GET | `/api/account/sessions` | 从 Cookie 验证并返回已登录账号、到期时间、当前状态、limit 及 switchToken；没有有效凭据则空列表，不返回会话凭据 |
 | POST | `/api/account/switch` | `{userId}`，精确 Origin + `X-Account-Switch-Token`；仅切换 Cookie 持有的有效会话，不续期；不要求活动会话仍有效 |
@@ -22,7 +23,7 @@
 | POST | `/api/account/password` | `{currentPassword,password,confirmPassword}`；成功撤销全部会话 |
 | GET | `/api/health` | 匿名总体状态 |
 
-当前配置 `SESSION_TTL_SECONDS=86400`。`uranus_session` 为活动凭据，`uranus_accounts` 为最多 5 个独立签名凭据的 HttpOnly Cookie；两者生产均 Secure/SameSite=Strict/Path=/。Cookie 与服务器原始到期时间保持一致，切换不会重新签发或续期。账号列表接口返回的 switchToken 仅用于该 Cookie 账号集合的切换 CSRF，不可作为业务 API 会话凭据；集合变化后须重新获取。
+当前配置 `SESSION_TTL_SECONDS=86400`。`uranus_session` 为活动凭据，`uranus_accounts` 为最多 5 个独立签名凭据的 HttpOnly Cookie；两者生产均 Secure/SameSite=Strict/Path=/。Cookie 与服务器当前到期时间保持一致；默认 24 小时会话在前台真实交互后的成功业务请求触发滑动续期，每小时最多延期一次至当前时间后 24 小时。切换本身不续期，后台轮询不触发续期。账号列表接口返回的 switchToken 仅用于该 Cookie 账号集合的切换 CSRF，不可作为业务 API 会话凭据；集合变化后须重新获取。
 
 ## 文件夹与笔记
 

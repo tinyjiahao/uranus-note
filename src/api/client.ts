@@ -2,6 +2,7 @@ import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
 import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, PageDto } from "../../shared/dto";
 import type { AccountIdentity } from "../../shared/account";
 import { activateIdentity, identity, identityMatches, lockIdentity, notifyAccountChange, trackRequest } from "../state/identity";
+import { afterActiveRequest, waitForSessionActivity } from "../state/sessionActivity";
 
 let csrfToken = "";
 export const setCsrfToken = (value: string) => { csrfToken = value; };
@@ -28,6 +29,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const error = body as ApiErrorBody;
     throw new ApiClientError(response.status, error.error?.code ?? "HTTP_ERROR", error.error?.message ?? `请求失败 (${response.status})`, error);
   }
+  if (expected.userId && /^\/api\/(notes|folders|attachments|import)(\/|\?|$)/.test(path)) {
+    afterActiveRequest(`${expected.userId}:${expected.epoch}`, async () => (await request<{ expiresAt: number }>("/api/session/activity", { method: "POST", signal: AbortSignal.timeout(10_000) })).expiresAt);
+  }
   return body as T;
   } finally { untrack(); }
 }
@@ -40,15 +44,17 @@ export async function getSession(): Promise<Session> {
   return session;
 }
 export async function login(email: string, password: string): Promise<Session> {
+  await waitForSessionActivity();
   const session = await request<Session>("/api/session", { method: "POST", body: JSON.stringify({ email, password }) });
   setCsrfToken(session.csrfToken ?? "");
   activateIdentity(session.user?.id ?? null); notifyAccountChange();
   return session;
 }
-export async function logout() { const result = await request<Session>("/api/session", { method: "DELETE" }); setCsrfToken(""); lockIdentity(true); return result; }
+export async function logout() { await waitForSessionActivity(); const result = await request<Session>("/api/session", { method: "DELETE" }); setCsrfToken(""); lockIdentity(true); return result; }
 export const rememberedAccounts = () => request<{ accounts: { user: AccountIdentity; expiresAt: number; current: boolean }[]; limit: number; switchToken: string }>("/api/account/sessions");
-export const forgetAccount = (userId: string) => request("/api/account/forget", { method: "POST", body: JSON.stringify({ userId }) });
+export async function forgetAccount(userId: string) { await waitForSessionActivity(); return request("/api/account/forget", { method: "POST", body: JSON.stringify({ userId }) }); }
 export async function switchAccount(userId: string, switchToken: string) {
+  await waitForSessionActivity();
   const session = await request<Session>("/api/account/switch", { method: "POST", headers: { "X-Account-Switch-Token": switchToken }, body: JSON.stringify({ userId }) });
   setCsrfToken(session.csrfToken ?? ""); activateIdentity(session.user?.id ?? null); notifyAccountChange();
   return session;
@@ -56,8 +62,8 @@ export async function switchAccount(userId: string, switchToken: string) {
 export const register = (input: unknown) => request<{ registered: boolean; email: string }>("/api/register", { method: "POST", body: JSON.stringify(input) });
 export const getAccount = () => request<AccountIdentity>("/api/account");
 export const renameAccount = (username: string) => request<AccountIdentity>("/api/account", { method: "PATCH", body: JSON.stringify({ username }) });
-export async function changeEmail(input: unknown) { const result = await request<{ changed: boolean }>("/api/account/email", { method: "POST", body: JSON.stringify(input) }); if (result.changed) lockIdentity(true); return result; }
-export async function changePassword(input: unknown) { const result = await request("/api/account/password", { method: "POST", body: JSON.stringify(input) }); lockIdentity(true); return result; }
+export async function changeEmail(input: unknown) { await waitForSessionActivity(); const result = await request<{ changed: boolean }>("/api/account/email", { method: "POST", body: JSON.stringify(input) }); if (result.changed) lockIdentity(true); return result; }
+export async function changePassword(input: unknown) { await waitForSessionActivity(); const result = await request("/api/account/password", { method: "POST", body: JSON.stringify(input) }); lockIdentity(true); return result; }
 export const deploymentStatus = () => request<{ version: string; configured: boolean }>("/api/settings/status");
 
 export const listFolders = () => request<FolderDto[]>("/api/folders");

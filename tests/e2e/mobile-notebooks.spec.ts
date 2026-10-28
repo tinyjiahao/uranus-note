@@ -1,0 +1,34 @@
+import { test, expect } from "./fixtures";
+import { testEmail, testPassword } from "./credentials";
+
+for (const width of [320, 390, 767]) test(`mobile notebook navigation at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto("/login");
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail());
+  await page.getByLabel("密码", { exact: true }).fill(testPassword());
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  const picker = page.getByLabel("选择笔记本", { exact: true });
+  await expect(picker).toBeVisible();
+  await expect(picker.locator('option[value^="folder:"]').first()).toBeAttached();
+  const folder = await picker.locator('option[value^="folder:"]').first().getAttribute("value");
+  await picker.selectOption(folder!);
+  await expect(picker).toHaveValue(folder!);
+  await page.getByRole("button", { name: "新建笔记", exact: true }).click();
+  await expect(page.locator(".prose-editor")).toBeVisible();
+  await page.getByRole("button", { name: "返回笔记列表", exact: true }).click();
+  await expect(picker).toBeVisible();
+  await expect(page.locator(".note-row").first()).toBeVisible();
+  await picker.selectOption("all");
+  await expect(page.locator(".note-row").first()).toBeVisible();
+  await picker.selectOption("starred");
+  await expect(picker).toHaveValue("starred");
+  await picker.selectOption("trash");
+  await expect(picker).toHaveValue("trash");
+  await picker.selectOption(folder!);
+  await page.locator(".note-row").first().click();
+  await page.reload();
+  await expect(page.locator(".prose-editor")).toBeVisible();
+  await page.getByRole("button", { name: "返回笔记列表", exact: true }).click();
+  await expect(picker).toHaveValue(folder!);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

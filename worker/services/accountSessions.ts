@@ -14,6 +14,20 @@ type SessionRow = {
   id: string; email: string; username: string;
 };
 
+export const ACTIVE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const SESSION_RENEW_INTERVAL_MS = 60 * 60 * 1000;
+
+export async function renewAccountSession(db: D1Database, session: AccountSession) {
+  const now = Date.now();
+  await db.prepare(`UPDATE uranus_sessions SET expires_at=?
+    WHERE credential_digest=? AND user_id=? AND revoked_at IS NULL AND expires_at>?
+      AND expires_at<=? AND credential_version=?
+      AND EXISTS(SELECT 1 FROM uranus_users WHERE id=? AND disabled=0 AND credential_version=?)
+      AND EXISTS(SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')`)
+    .bind(now + ACTIVE_SESSION_TTL_MS, session.credentialDigest, session.user.id, now,
+      now + ACTIVE_SESSION_TTL_MS - SESSION_RENEW_INTERVAL_MS, session.credentialVersion, session.user.id, session.credentialVersion).run();
+}
+
 function validateSecret(secret: string) {
   if (new TextEncoder().encode(secret).length < 32) throw new ApiError(503, "CONFIGURATION_ERROR", "服务密钥长度不足");
 }

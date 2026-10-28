@@ -96,6 +96,14 @@ test("file display defaults to compact and card selection persists", async ({ pa
   await expect(file.locator("small")).toContainText("KB");
   await page.keyboard.press("Escape");
   await expect(actions).toHaveCount(0);
+  const attachmentBeforeMove = await page.locator(".prose-editor").evaluate(element => {
+    const editor = (element as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+    editor.commands.insertContentAt(editor.state.doc.content.size, { type: "paragraph", content: [{ type: "text", text: "附件拖动目标" }] });
+    return editor.getJSON().content!.find(node => node.type === "fileAttachment");
+  });
+  await page.getByRole("button", { name: "拖动附件", exact: true }).press("Alt+ArrowDown");
+  expect(await page.locator(".prose-editor").evaluate(element => (element as HTMLElement & { editor: import("@tiptap/core").Editor }).editor.getJSON().content!.find(node => node.type === "fileAttachment"))).toEqual(attachmentBeforeMove);
+  await page.keyboard.press("ControlOrMeta+s");
   await expect(page.locator(".save-state")).toContainText("已保存到服务器");
   await page.reload();
   await expect(file).toHaveClass(/file-attachment--card/);

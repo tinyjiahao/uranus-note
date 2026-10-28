@@ -79,7 +79,7 @@ class UranusTableView extends TableView {
     this.dom.appendChild(this.stage); this.stage.appendChild(this.table);
     this.handles = document.createElement("div"); this.handles.className = "table-handles"; this.handles.contentEditable = "false";
     this.stage.appendChild(this.handles);
-    this.rowNumbers = document.createElement("div"); this.rowNumbers.className = "table-row-numbers"; this.rowNumbers.contentEditable = "false";
+    this.rowNumbers = document.createElement("div"); this.rowNumbers.className = "table-row-numbers"; this.rowNumbers.contentEditable = "false"; this.rowNumbers.setAttribute("aria-hidden", "true");
     this.stage.appendChild(this.rowNumbers);
     this.table.addEventListener("pointermove", this.hover);
     this.table.addEventListener("pointerdown", this.startDrag);
@@ -107,9 +107,15 @@ class UranusTableView extends TableView {
     let showNumbers = false;
     try { showNumbers = localStorage.getItem("uranus.table.rowNumbers") === "1"; } catch { /* Preference storage is optional. */ }
     this.dom.classList.toggle("show-row-numbers", showNumbers);
-    const bodyRows = rows.filter(row => !Array.from(row.cells).every(cell => cell.tagName === "TH"));
-    this.rowNumbers.replaceChildren(...bodyRows.map((row, index) => {
-      const number = document.createElement("span"); number.textContent = String(index + 1);
+    // The gutter belongs to the node view, never to a table cell or the document.
+    this.stage.style.width = this.node.attrs.widthMode === "fixed" ? `calc(${this.table.style.width} + ${showNumbers ? 32 : 0}px)` : "100%";
+    let bodyIndex = 0;
+    this.rowNumbers.replaceChildren(...rows.map(row => {
+      const header = Array.from(row.cells).every(cell => cell.tagName === "TH");
+      const number = document.createElement(header ? "div" : "span");
+      number.className = "table-row-number";
+      if (!header) number.textContent = String(++bodyIndex);
+      else number.classList.add("table-row-number-header");
       number.style.top = `${row.offsetTop}px`; number.style.height = `${row.offsetHeight}px`;
       return number;
     }));
@@ -166,8 +172,10 @@ class UranusTableView extends TableView {
     this.handles.querySelectorAll<HTMLElement>("[data-index]").forEach(el => {
       const i = Number(el.dataset.index); const row = el.className.includes("row"); const items = row ? rows : cells;
       const item = items[i]; const last = items.at(-1); if (!last) return;
-      const start = item ? (row ? item.offsetTop : item.offsetLeft) : (row ? last.offsetTop + last.offsetHeight : last.offsetLeft + last.offsetWidth);
-      const center = el.className.includes("handle") && item ? (row ? item.offsetHeight : item.offsetWidth) / 2 : 0;
+      const origin = this.handles.getBoundingClientRect();
+      const rect = (item ?? last).getBoundingClientRect();
+      const start = row ? (item ? rect.top : rect.bottom) - origin.top : (item ? rect.left : rect.right) - origin.left;
+      const center = el.className.includes("handle") && item ? (row ? rect.height : rect.width) / 2 : 0;
       el.style[row ? "top" : "left"] = `${start + center}px`;
     });
     this.overflow();

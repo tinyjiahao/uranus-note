@@ -17,6 +17,22 @@ test("images align independently in body and table cells and persist in readonly
   const editor = page.locator(".prose-editor");
   await editor.fill("图片布局测试"); await editor.press("Enter"); await upload(page);
   const bodyImage = editor.locator("figure").first();
+  const imageAttributes = await bodyImage.locator("img").getAttribute("data-attachment-id");
+  await editor.getByRole("button", { name: "拖动图片", exact: true }).press("Alt+ArrowUp");
+  await expect(bodyImage.locator("img")).toHaveAttribute("data-attachment-id", imageAttributes!);
+  await page.keyboard.press("ControlOrMeta+z");
+  const beforePreview = await bodyImage.locator("img").getAttribute("style");
+  await bodyImage.locator("img").dblclick();
+  const preview = page.getByRole("dialog", { name: "图片放大预览" });
+  await expect(preview).toBeVisible();
+  await preview.locator("img").click();
+  await expect(preview).toBeVisible();
+  await preview.click({ position: { x: 10, y: 100 } });
+  await expect(preview).toHaveCount(0);
+  expect(await bodyImage.locator("img").getAttribute("style")).toBe(beforePreview);
+  await bodyImage.locator("img").dblclick();
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
   await bodyImage.locator("img").click();
   for (const [name, value] of [["靠左对齐", "left"], ["居中对齐", "center"], ["靠右对齐", "right"]] as const) {
     await page.getByRole("button", { name, exact: true }).click();
@@ -67,4 +83,8 @@ test("images align independently in body and table cells and persist in readonly
   for (const handle of await editor.locator(".image-resize-handle").all()) await expect(handle).toBeHidden();
   await page.setViewportSize({ width: 768, height: 900 });
   expect(await cellImage.evaluate(el => el.querySelector("img")!.getBoundingClientRect().width <= el.closest("td")!.getBoundingClientRect().width)).toBe(true);
+  await cellImage.locator("img").dblclick();
+  await expect(preview).toBeVisible();
+  await page.getByRole("button", { name: "关闭图片预览" }).click();
+  await expect(preview).toHaveCount(0);
 });

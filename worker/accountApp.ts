@@ -9,7 +9,7 @@ import { hmac, timingSafeEqual } from "./lib/crypto";
 import { assertOrigin, clearSessionCookie, setSessionCookie } from "./middleware/auth";
 import { requestContext } from "./middleware/security";
 import { authenticateAccount, changeAccountEmail, changeAccountPassword, registerAccount, renameAccount } from "./services/accounts";
-import { issueAccountSession, readAccountSession, revokeAccountSession } from "./services/accountSessions";
+import { issueAccountSession, readAccountSession, revokeAccountSession, renewAccountSession } from "./services/accountSessions";
 import { MAX_REMEMBERED_ACCOUNTS, rememberedAccounts, writeRememberedAccounts } from "./services/rememberedAccounts";
 import { businessWrite } from "./services/businessWrite";
 import { getJob } from "./services/maintenance";
@@ -121,6 +121,18 @@ accountApp.delete("/api/session", async (c) => {
   writeRememberedAccounts(c, []);
   clearSessionCookie(c);
   return c.json({ authenticated: false });
+});
+accountApp.post("/api/session/activity", async (c) => {
+  const token = getCookie(c, "uranus_session")!;
+  const session = c.get("accountSession")!;
+  await renewAccountSession(c.env.DB, session);
+  // Re-read after the conditional write: a concurrent revoke must not be revived.
+  const current = await readAccountSession(c.env.DB, c.env.SESSION_SECRET, token);
+  if (!current) throw new ApiError(401, "UNAUTHENTICATED", "会话已失效，请重新登录");
+  setSessionCookie(c, token, Math.max(0, Math.floor((current.expiresAt - Date.now()) / 1000)));
+  const entries = await rememberedAccounts(c);
+  writeRememberedAccounts(c, entries);
+  return c.json({ expiresAt: current.expiresAt });
 });
 accountApp.post("/api/account/forget", async (c) => {
   const body = await c.req.json<{ userId?: unknown }>().catch(() => ({} as { userId?: unknown }));

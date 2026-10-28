@@ -272,6 +272,21 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     </aside>}
 
     {layout !== "focus" && <section className="note-list-panel">
+      <div className="mobile-notebook-bar">
+        <Folder aria-hidden="true" />
+        <select aria-label="选择笔记本" value={scope.kind === "folder" ? `folder:${scope.folderId}` : scope.kind} onChange={event => {
+          const value = event.target.value;
+          if (value.startsWith("folder:")) chooseScope({ kind: "folder", folderId: Number(value.slice(7)) });
+          else if (value === "all" || value === "starred" || value === "trash") chooseScope({ kind: value });
+        }}>
+          <option value="none" disabled>请选择笔记本</option>
+          <option value="all">全部笔记</option>
+          <option value="starred">已加星标</option>
+          <option value="trash">最近删除</option>
+          {folders.data?.map(folder => <option key={folder.id} value={`folder:${folder.id}`}>{folder.name} ({folder.noteCount})</option>)}
+        </select>
+      </div>
+      {folders.error && <div className="mobile-notebook-error" role="alert">笔记本加载失败 <button onClick={() => void folders.refetch()}>重试</button></div>}
       <header className="list-header">
         {layout === "two" && <button aria-label="展开侧栏" onClick={() => setLayout("three")}><ChevronLeft /></button>}
         <div className="search-box"><Search /><input id="global-search" aria-label="搜索标题和正文" placeholder="搜索标题和正文" value={search} onChange={(event) => setSearch(event.target.value)} />{search && <button aria-label="清空搜索" onClick={() => setSearch("")}>×</button>}</div>
@@ -282,6 +297,8 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
       <div className="list-options"><SortControls /></div>
       {search && scope.kind !== "none" && <div className="search-feedback" role="status">范围：{scope.kind === "folder" ? folders.data?.find(f => f.id === scope.folderId)?.name : ({ all: "全部笔记", starred: "已加星标", trash: "最近删除" })[scope.kind]} · {search !== debouncedSearch || notes.isFetching ? "正在搜索…" : notes.error ? "搜索失败" : noteItems.length ? "匹配 " + (notes.data?.pages[0]?.totalCount ?? noteItems.length) + " 篇" : "无匹配结果"}</div>}
       <div className="note-list" ref={listRef} onScroll={rememberList} aria-busy={notes.isLoading || search !== debouncedSearch}>
+        {scope.kind === "none" && <div className="empty-state">请选择笔记本或“全部笔记”查看内容。</div>}
+        {scope.kind !== "none" && notes.isLoading && <div className="empty-state" role="status">正在加载笔记…</div>}
         {(search === debouncedSearch ? noteItems : []).map((note) => <div key={note.id} className="note-row-wrapper" data-note-id={note.id} onContextMenu={event => { event.preventDefault(); openNoteMenu(note, pointAnchor(event.currentTarget, event.clientX, event.clientY)); }} onKeyDown={event => { if (!event.nativeEvent.isComposing && event.shiftKey && event.key === "F10") { event.preventDefault(); openNoteMenu(note, event.currentTarget.querySelector<HTMLElement>(".note-row-more")!); } }}>
           <button className={`note-row ${selectedId === note.id ? "active" : ""}`} onClick={() => { rememberList(); navigate(`/notes/${note.id}`); }}>
           <div><strong>{note.title || "未命名笔记"}</strong>{note.pinned && <Pin className="tiny" />}{note.starred && <Star className="tiny filled" />}</div>
