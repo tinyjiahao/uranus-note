@@ -4,7 +4,7 @@ import { ApiError } from "../lib/http";
 // Metadata is immutable after upload; the commit still guards readiness/reference races.
 export async function validateFileMetadata(db: D1Database, noteId: number, content: ContentNode) {
   const files: ContentNode[] = [];
-  const visit = (node: ContentNode) => { if (node.type === "fileAttachment") files.push(node); node.content?.forEach(visit); };
+  const visit = (node: ContentNode) => { if (node.type === "fileAttachment" || node.type === "inlineFile") files.push(node); node.content?.forEach(visit); };
   visit(content);
   if (!files.length) return;
   const rows = await db.prepare("SELECT id, file_name, mime, size FROM uranus_attachments WHERE note_id=? AND status='ready'").bind(noteId).all<{ id: string; file_name: string; mime: string; size: number }>();

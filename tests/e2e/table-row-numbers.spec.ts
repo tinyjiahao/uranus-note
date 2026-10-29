@@ -56,7 +56,7 @@ test('row number gutter stays outside cells and preserves content and fixed colu
   await body.locator('.tableWrapper').evaluate(el => { el.scrollLeft = 25; });
   await checkGeometry();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(390);
-  await page.getByRole('button', { name: '只读模式', exact: true }).click();
+  await page.getByRole('button', { name: '切换到只读模式', exact: true }).click();
   await checkGeometry();
   await page.emulateMedia({ media: 'print' });
   await expect(body.locator('.table-row-numbers')).toBeHidden();

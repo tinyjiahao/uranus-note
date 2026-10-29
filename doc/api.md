@@ -23,7 +23,7 @@
 | POST | `/api/account/password` | `{currentPassword,password,confirmPassword}`；成功撤销全部会话 |
 | GET | `/api/health` | 匿名总体状态 |
 
-当前配置 `SESSION_TTL_SECONDS=86400`。`uranus_session` 为活动凭据，`uranus_accounts` 为最多 5 个独立签名凭据的 HttpOnly Cookie；两者生产均 Secure/SameSite=Strict/Path=/。Cookie 与服务器当前到期时间保持一致；默认 24 小时会话在前台真实交互后的成功业务请求触发滑动续期，每小时最多延期一次至当前时间后 24 小时。切换本身不续期，后台轮询不触发续期。账号列表接口返回的 switchToken 仅用于该 Cookie 账号集合的切换 CSRF，不可作为业务 API 会话凭据；集合变化后须重新获取。
+当前配置 `SESSION_TTL_SECONDS=604800`（7 天）。`uranus_session` 为活动凭据，`uranus_accounts` 为最多 5 个独立签名凭据的 HttpOnly Cookie；两者生产均 Secure/SameSite=Strict/Path=/。Cookie 与服务器当前到期时间保持一致；默认 7 天会话在前台真实交互后的成功业务请求触发滑动续期，每小时最多延期一次至当前时间后 7 天。切换本身不续期，后台轮询不触发续期。账号列表接口返回的 switchToken 仅用于该 Cookie 账号集合的切换 CSRF，不可作为业务 API 会话凭据；集合变化后须重新获取。
 
 ## 文件夹与笔记
 
@@ -33,11 +33,12 @@
 | PATCH/DELETE | `/api/folders/:id` | 重命名/删除 |
 | GET/POST | `/api/notes` | 分页筛选搜索/幂等创建 |
 | GET/PATCH/DELETE | `/api/notes/:id` | 详情/条件保存/软删除；`hard=1` 排队清除 |
+| GET | `/api/notes/:id/stats` | 只读概要：附件数量与大小（图片/文件、仅历史版本引用、待清理）、历史版本数量与最近时间；回收站笔记也可查询，越权 404 |
 | POST | `/api/notes/:id/restore` | 从回收站恢复 |
 | POST | `/api/notes/empty-trash` | 创建清空任务 |
 | POST | `/api/import/markdown` | 导入 Markdown 并创建笔记 |
 
-列表查询支持 `folder_id`、`starred=1`、`deleted=1`、`q`、`sort_by`、`sort_dir`、`page`、`pageSize`。PATCH 携带 `expected_revision`、UUIDv7 `operation_id`、当前客户端的 `content_schema_version: 11` 和要修改的字段。服务端兼容读取 schema 1—11，旧客户端不得覆盖较新 schema；版本常量以 `shared/schemaVersion.ts` 为准。label/fileAttachment/noteLink 分别从版本 6/7/8 开始支持；附件 display 属性从版本 9 开始，表格内文件附件从版本 10 开始，textColor mark 和 highlight 的 color 属性从版本 11 开始，颜色只接受共享白名单。
+列表查询支持 `folder_id`、`starred=1`、`deleted=1`、`q`、`sort_by`、`sort_dir`、`page`、`pageSize`。PATCH 携带 `expected_revision`、UUIDv7 `operation_id`、当前客户端的 `content_schema_version: 15` 和要修改的字段。服务端兼容读取 schema 1—11，旧客户端不得覆盖较新 schema；版本常量以 `shared/schemaVersion.ts` 为准。label/fileAttachment/noteLink 分别从版本 6/7/8 开始支持；附件 display 属性从版本 9 开始，表格内文件附件从版本 10 开始，textColor mark 和 highlight 的 color 属性从版本 11 开始，颜色只接受共享白名单；inlineImage（行内图片）从版本 12 开始支持，只能位于段落内；段落和标题的 `indent` 属性（1–6 的整数，空或 0 表示无缩进）从版本 13 开始支持；代码块的布尔属性 `collapsed`（折叠状态）从版本 14 开始支持；行内文件附件节点 `inlineFile` 从版本 15 开始支持。
 
 ## 附件与版本
 
@@ -50,7 +51,7 @@
 | GET | `/api/notes/:id/versions/:vid` | 快照正文 |
 | POST | `/api/notes/:id/versions/:vid/restore` | 原子备份当前正文并恢复 |
 
-附件接受 PNG/JPEG/WebP/GIF、PDF、docx/xlsx/pptx、ZIP、TXT/Markdown/CSV（文本须为无 NUL 的合法 UTF-8），具体 MIME 白名单见 `shared/files.ts`。最大 10,000,000 字节、请求体上限 10.5 MB 不变；正文 JSON 最大 1,500,000 UTF-8 字节。
+附件接受 PNG/JPEG/WebP/GIF、PDF、docx/xlsx/pptx、ZIP、TXT/Markdown/CSV/JSON/YAML（文本须为无 NUL 的合法 UTF-8），具体 MIME 白名单见 `shared/files.ts`。最大 10,000,000 字节、请求体上限 10.5 MB 不变；正文 JSON 最大 1,500,000 UTF-8 字节。
 
 附件 200/304 为 `Cache-Control: private, max-age=31536000, immutable`，ETag 条件判断前执行用户归属校验。图片 inline；其他文件强制 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; sandbox`。本机已缓存副本可能在退出登录或服务端删除后保留，浏览器淘汰时机不保证。
 

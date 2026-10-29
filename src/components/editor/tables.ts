@@ -186,7 +186,7 @@ class UranusTableView extends TableView {
     this.dom.dataset.overflowRight = String(this.dom.scrollWidth - this.dom.clientWidth - this.dom.scrollLeft > 2);
   };
   private contextMenu = (event: MouseEvent) => {
-    if (!this.editor.isEditable || (event.target as HTMLElement).closest(".resizable-image")) return;
+    if (!this.editor.isEditable || (event.target as HTMLElement).closest(".resizable-image, .inline-image")) return;
     const cell = (event.target as HTMLElement).closest("td,th");
     if (!cell) return;
     const pos = this.editor.view.posAtDOM(cell, 0) - 1;

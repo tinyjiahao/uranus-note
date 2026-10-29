@@ -82,7 +82,7 @@ test("grouped toolbar order, narrow sheet and readonly preserve access", async (
   const box = (await sheet.boundingBox())!;
   expect(box.x).toBe(0); expect(box.y + box.height).toBeCloseTo(800, 0);
   await page.keyboard.press("Escape"); await expect(page.getByRole("button", { name: "笔记更多" })).toBeFocused();
-  await page.getByRole("button", { name: "只读模式", exact: true }).click();
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click();
   await expect(page.getByRole("button", { name: "加粗", exact: true })).toBeDisabled();
   await expect(page.locator(".prose-editor")).toHaveAttribute("contenteditable", "false");
   await expect(page.getByRole("button", { name: "在笔记中查找" })).toBeVisible();

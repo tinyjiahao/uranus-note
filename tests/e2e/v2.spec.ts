@@ -155,7 +155,7 @@ test("table picker, widths, alignment, cancellation, undo, persistence and reado
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible(); await page.reload();
   await expect(editor).toContainText("表格后的正文"); await expect(editor.locator("th").first()).toHaveCSS("text-align", "right");
   expect((await editor.locator("th").first().boundingBox())!.width).toBeCloseTo(220, 0);
-  await page.getByRole("button", { name: "只读模式", exact: true }).click(); await expect(editor).toHaveAttribute("contenteditable", "false");
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click(); await expect(editor).toHaveAttribute("contenteditable", "false");
   await expect(page.locator(".table-tools")).toHaveCount(0);
   await page.setViewportSize({ width: 375, height: 800 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);

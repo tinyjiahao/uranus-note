@@ -1,7 +1,8 @@
 import { ColoredHighlight, TextColor, TextColorsPopup } from "./textColors";
 import { ParagraphStyles, paragraphStyle } from "./ParagraphStyles";
-import { LabelNode, LabelPopup } from "./labels";
-import { FileAttachment, attachmentNode, fileAccept, fileWithMime } from "./fileAttachment";
+import { InlineAtomDrag, LabelNode, LabelPopup } from "./labels";
+import { MIME_EXTENSIONS } from "../../../shared/files";
+import { CellTailClick, FileAttachment, InlineFile, attachmentNode, fileAccept, fileWithMime, insertInlineFile } from "./fileAttachment";
 import { Paperclip } from "lucide-react";
 import { NoteLinkNode, NoteLinkPopup } from "./noteLinks";
 import { FileSymlink } from "lucide-react";
@@ -9,6 +10,10 @@ import { Tag } from "lucide-react";
 import { installPrintImages } from "./printing";
 import { ImagePreview } from "./ImagePreview";
 import { BlockDrag } from "./blockDrag";
+import { InlineImage, insertImage } from "./inlineImage";
+import { BlockIndent, changeIndent, indentAvailability } from "./indent";
+import { CodeBlockView } from "./codeBlockView";
+import { AttachmentPreviewHost } from "../AttachmentPreview";
 import { OutlinePopup, headings } from "./OutlinePopup";
 import { ListTree } from "lucide-react";
 import { Plugin } from "@tiptap/pm/state";
@@ -20,7 +25,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import { IndentIncrease, IndentDecrease, ExternalLink, Pencil, Unlink } from "lucide-react";
 import { tableExtensions, tableContext } from "./tables";
 import { CellSelection } from "@tiptap/pm/tables";
-import { NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import type { SelectionBookmark } from "@tiptap/pm/state";
 import { Slice } from "@tiptap/pm/model";
 import { Popup, pointAnchor, type PopupAnchor } from "../Popup";
@@ -29,10 +34,10 @@ import { readPreference, writePreference, useUiStore } from "../../state/ui";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { AlignLeft, AlignCenter, AlignRight, Bold, Braces, ChevronDown, CheckSquare, Clipboard, Code, Eye, ImagePlus, Italic, Link2, List, ListOrdered, Minus, MoveHorizontal, Quote, Redo2, Plus, Search, Strikethrough, Table2, Underline as UnderlineIcon, Undo2 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AlignLeft, AlignCenter, AlignRight, Bold, Braces, ChevronDown, CheckSquare, Code, Eye, ImagePlus, Italic, Link2, List, ListOrdered, Minus, MoveHorizontal, Quote, Redo2, Plus, Search, Strikethrough, Table2, Underline as UnderlineIcon, Undo2 } from "lucide-react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ContentNode, NoteDetail } from "../../../shared/dto";
-import { copyAttachment, uploadAttachment } from "../../api/client";
+import { copyAttachment, uploadAttachment, type AttachmentDto } from "../../api/client";
 import { SearchHighlight, searchHighlightKey, updateEditorSearch } from "./searchHighlight";
 import { Extension, Mark, mergeAttributes, type Editor } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
@@ -46,13 +51,110 @@ const SmallText = Mark.create({
   renderHTML: ({ HTMLAttributes }) => ["small", mergeAttributes(HTMLAttributes, { "data-small-text": "" }), 0],
 });
 
+// Inline code keeps its default inclusive behaviour (typing continues the code). At the end boundary of a code span in the middle of a line, the arrow keys toggle
+// the caret between "inside" and "outside" the code (via stored marks) before moving on, so text can be typed between the code and the text after it.
+const CodeBoundary = Extension.create({
+  name: "codeBoundary",
+  addKeyboardShortcuts() {
+    const toggle = (leave: boolean) => () => {
+      const { state, view } = this.editor, selection = state.selection, code = state.schema.marks.code;
+      if (!code || !selection.empty || !this.editor.isEditable || view.composing) return false;
+      const { nodeBefore: before, nodeAfter: after } = selection.$from;
+      if (!before || !code.isInSet(before.marks) || (after && code.isInSet(after.marks))) return false;
+      const marks = state.storedMarks ?? selection.$from.marks(), inside = Boolean(code.isInSet(marks));
+      if (leave) {
+        if (!after || !inside) return false;
+        view.dispatch(state.tr.setStoredMarks(marks.filter(mark => mark.type !== code)));
+        return true;
+      }
+      if (inside || !state.storedMarks) return false;
+      view.dispatch(state.tr.setStoredMarks(before.marks));
+      return true;
+    };
+    return { ArrowRight: toggle(true), ArrowLeft: toggle(false) };
+  },
+});
+
+// TipTap's blockquote lifts a non-first child out on Backspace and ProseMirror lifts an empty paragraph out on Enter, which splits one quote into several
+// when lines are edited or deleted in its middle. Inside a quote only the first line (Backspace) and the last empty line (Enter) leave it; other lines merge/stay.
+const QuoteKeys = Extension.create({
+  name: "quoteKeys",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    const inQuote = () => {
+      const { selection } = this.editor.state;
+      const { $from } = selection;
+      if (!selection.empty || !$from.parent.isTextblock || $from.depth < 2) return null;
+      const quote = $from.node($from.depth - 1);
+      return quote.type.name === "blockquote" ? { quote, index: $from.index($from.depth - 1), $from } : null;
+    };
+    return {
+      Backspace: () => {
+        const context = inQuote();
+        if (!context || context.index === 0 || context.$from.parentOffset !== 0 || this.editor.view.composing) return false;
+        return this.editor.commands.joinBackward();
+      },
+      Enter: () => {
+        const context = inQuote();
+        if (!context || context.$from.parent.content.size > 0 || context.index >= context.quote.childCount - 1 || this.editor.view.composing) return false;
+        return this.editor.commands.splitBlock();
+      },
+    };
+  },
+});
+
+// Copying part of one textblock inside a quote/list/table/heading carries that wrapper as clipboard context; pasting into an empty line would then recreate the wrapper.
+// Partial single-textblock slices are reduced to their inline content so only whole-block copies keep the surrounding structure.
+const PasteInline = Extension.create({
+  name: "pasteInline",
+  addProseMirrorPlugins() {
+    return [new Plugin({ props: { transformPasted(slice) {
+      let node = slice.content.childCount === 1 ? slice.content.firstChild : null, depth = 0;
+      while (node && !node.isTextblock && node.childCount === 1) { node = node.firstChild; depth++; }
+      if (!node || !node.isTextblock || node.type.name === "codeBlock" || (depth === 0 && node.type.name === "paragraph")) return slice;
+      return slice.openStart === depth + 1 && slice.openEnd === depth + 1 ? new Slice(node.content, 0, 0) : slice;
+    } } })];
+  },
+});
+
+// Selected whole line(s) in a code block: Tab/Shift-Tab indent/outdent every touched line by two spaces instead of replacing the selection.
+function changeCodeIndent(editor: Editor, outdent: boolean) {
+  const { state, view } = editor, { selection } = state, { $from, $to } = selection;
+  if (selection.empty || $from.parent.type.name !== "codeBlock" || $from.parent !== $to.parent) return false;
+  const text = $from.parent.textContent, fromOffset = $from.parentOffset, toOffset = $to.parentOffset;
+  const firstStart = text.lastIndexOf("\n", fromOffset - 1) + 1;
+  const lastEnd = text.indexOf("\n", toOffset) === -1 ? text.length : text.indexOf("\n", toOffset);
+  const wholeLine = fromOffset === firstStart && toOffset === lastEnd;
+  const effectiveTo = text[toOffset - 1] === "\n" ? toOffset - 1 : toOffset;
+  const multiLine = text.slice(fromOffset, effectiveTo).includes("\n");
+  if (!multiLine && !wholeLine && !outdent) return false;
+  const starts = [firstStart];
+  for (let i = text.indexOf("\n", firstStart); i !== -1 && i < effectiveTo; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
+  const base = $from.start(), tr = state.tr;
+  for (const start of starts.reverse()) {
+    if (!outdent) { tr.insertText("  ", base + start); continue; }
+    const lead = text.slice(start, start + 2), remove = lead === "  " ? 2 : lead.startsWith(" ") || lead.startsWith("\t") ? 1 : 0;
+    if (remove) tr.delete(base + start, base + start + remove);
+  }
+  if (!tr.docChanged) return true;
+  tr.setSelection(TextSelection.create(tr.doc, tr.mapping.map(selection.from, -1), tr.mapping.map(selection.to, 1)));
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
 const CodeBlockControls = Extension.create({
   name: "codeBlockControls",
   addKeyboardShortcuts() {
     return {
-      Tab: () => this.editor.isActive("codeBlock") && this.editor.commands.insertContent("  "),
+      Tab: () => {
+        if (!this.editor.isActive("codeBlock") || !this.editor.isEditable || this.editor.view.composing) return false;
+        if (changeCodeIndent(this.editor, false)) return true;
+        this.editor.view.dispatch(this.editor.state.tr.insertText("  ").scrollIntoView());
+        return true;
+      },
       "Shift-Tab": () => {
         if (!this.editor.isActive("codeBlock")) return false;
+        if (changeCodeIndent(this.editor, true)) return true;
         const { from } = this.editor.state.selection;
         const before = this.editor.state.doc.textBetween(Math.max(0, from - 2), from);
         const remove = before.endsWith("  ") ? 2 : before.endsWith(" ") ? 1 : 0;
@@ -158,7 +260,7 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
     if (!editor.isEditable) return; event.preventDefault(); event.stopPropagation(); openMenu(pointAnchor(event.currentTarget as HTMLElement, event.clientX, event.clientY));
   }}>
     <span className="image-frame" draggable data-drag-handle contentEditable={false}>
-    <img loading="lazy" decoding="async" src={String(node.attrs.src)} data-attachment-id={String(node.attrs.attachmentId ?? "")} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} onClick={() => {
+    <img draggable={false} loading="lazy" decoding="async" src={String(node.attrs.src)} data-attachment-id={String(node.attrs.attachmentId ?? "")} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} onClick={() => {
       const pos = getPos(); if (typeof pos === "number") editor.commands.setNodeSelection(pos);
     }} title="双击放大图片" onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); setPreview(true); }} />
     {editor.isEditable && <button className="image-resize-handle" aria-label="调整图片宽度" onPointerDown={(event) => {
@@ -170,7 +272,7 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
       const move = (moveEvent: PointerEvent) => {
         const current = drag.current; if (!current) return;
         if (!editor.isEditable) { drag.current = undefined; setWidth(initial); cleanup.current(); return; }
-        const next = Math.min(900, Math.max(120, current.startWidth + moveEvent.clientX - current.startX));
+        const next = Math.min(900, Math.max(80, current.startWidth + moveEvent.clientX - current.startX));
         current.latest = next; setWidth(next);
       };
       const stop = () => {
@@ -196,7 +298,7 @@ const AttachmentImage = Image.extend({
     return {
       ...this.parent?.(),
       attachmentId: { default: null, parseHTML: (element) => element.getAttribute("data-attachment-id"), renderHTML: (attrs) => ({ "data-attachment-id": attrs.attachmentId }) },
-      width: { default: null, parseHTML: (element) => element.getAttribute("width"), renderHTML: (attrs) => attrs.width ? { width: attrs.width } : {} },
+      width: { default: null, parseHTML: (element) => { const value = Number(element.getAttribute("width")); return Number.isFinite(value) && value > 0 ? Math.round(value) : null; }, renderHTML: (attrs) => attrs.width ? { width: attrs.width } : {} },
       imageAlign: { default: null, parseHTML: (element) => {
         const value = element.getAttribute("data-image-align"); return value && ["left", "center", "right"].includes(value) ? value : null;
       }, renderHTML: (attrs) => attrs.imageAlign ? { "data-image-align": attrs.imageAlign } : {} },
@@ -205,7 +307,9 @@ const AttachmentImage = Image.extend({
   addNodeView() { return ReactNodeViewRenderer(ResizableImageNode); },
 });
 
-function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onUploadState, readOnlyBecauseDeleted, titleHost }: { note: NoteDetail; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; onPersistLocal?: () => Promise<void>; onUploadState?: (uploading: boolean) => void; readOnlyBecauseDeleted: boolean; titleHost?: HTMLElement | null }) {
+const isBlankDoc = (doc: ContentNode) => (doc.content ?? []).every(node => node.type === "paragraph" && !(node.content ?? []).length);
+
+function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onUploadState, readOnlyBecauseDeleted, titleHost, modeHost }: { note: NoteDetail; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; onPersistLocal?: () => Promise<void>; onUploadState?: (uploading: boolean) => void; readOnlyBecauseDeleted: boolean; titleHost?: HTMLElement | null; modeHost?: HTMLElement | null }) {
   const callbacks = useRef({ onChange, onPersistLocal }); callbacks.current = { onChange, onPersistLocal };
   const [initialParts] = useState(() => splitNoteTitle(note.content));
   const [structureIssue, setStructureIssue] = useState(() => {
@@ -215,8 +319,17 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   const titleNode = useRef(initialParts.title);
   const [titleValue, setTitleValue] = useState(() => titleText(initialParts.title));
   const titleFieldRef = useRef<HTMLTextAreaElement>(null);
+  const [titleFocused, setTitleFocused] = useState(false);
+  // Narrow screens: a focused title grows (max 4 lines) instead of clipping; unfocused it shows one ellipsised line (overlay), without remounting the textarea.
+  useLayoutEffect(() => {
+    const field = titleFieldRef.current; if (!field) return;
+    if (titleFocused && window.matchMedia("(max-width: 767px)").matches) { field.style.height = "auto"; field.style.height = `${Math.min(field.scrollHeight + 2, 88)}px`; }
+    else field.style.height = "";
+  }, [titleFocused, titleValue]);
   const preferenceKey = `uranus.readOnly.${note.id}`;
-  const [readOnlyPreference, setReadOnly] = useState(readPreference(preferenceKey) === "1");
+  // Phones open existing notes read-only (session-only, never persisted) so a stray tap cannot edit; blank new notes stay editable. Desktop keeps the per-note preference.
+  const phone = useRef(window.matchMedia("(max-width: 767px)").matches);
+  const [readOnlyPreference, setReadOnly] = useState(() => phone.current ? !isBlankDoc(note.content) : readPreference(preferenceKey) === "1");
   const readOnly = readOnlyBecauseDeleted || readOnlyPreference;
   const { widthMode, setWidthMode, editorFontSize } = useUiStore();
   const [tablePicker, setTablePicker] = useState<{ anchor: PopupAnchor; range?: { from: number; to: number } } | null>(null);
@@ -229,13 +342,17 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   }, [editorNotice]);
   const [upload, setUpload] = useState<{ file: File; busy: boolean; error: string } | null>(null);
   const uploadBookmark = useRef<SelectionBookmark | null>(null);
+  const copiedAttachments = useRef(new Map<string, Promise<AttachmentDto>>());
   const retryPaste = useRef<(() => void) | null>(null);
   const [pasteError, setPasteError] = useState("");
   const pasteHandler = useRef<(event: ClipboardEvent, slice: Slice) => boolean>(() => false);
+  const dropBusy = useRef(false);
+  const dropHandler = useRef<(view: import("@tiptap/pm/view").EditorView, event: DragEvent, moved: boolean) => boolean>(() => false);
   const [showRowNumbers, setShowRowNumbers] = useState(() => readPreference("uranus.table.rowNumbers") === "1");
   const [linkDialog, setLinkDialog] = useState<{ from: number; to: number; name: string; href: string; error: string } | null>(null);
   const [linkActions, setLinkActions] = useState<{ from: number; to: number; href: string; anchor: PopupAnchor } | null>(null);
   useEffect(() => { const handler = (event: Event) => setEditorError((event as CustomEvent<string>).detail); window.addEventListener("uranus-editor-error", handler); return () => window.removeEventListener("uranus-editor-error", handler); }, []);
+  useEffect(() => { const handler = (event: Event) => setEditorNotice((event as CustomEvent<string>).detail); window.addEventListener("uranus-editor-notice", handler); return () => window.removeEventListener("uranus-editor-notice", handler); }, []);
   const [findOpen, setFindOpen] = useState(false);
   const [labelPopup, setLabelPopup] = useState<{ anchor: PopupAnchor; position?: number } | null>(null);
   const [colorsPopup, setColorsPopup] = useState<PopupAnchor | null>(null);
@@ -258,19 +375,33 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       const field = titleFieldRef.current; if (!field || field.readOnly) return false;
       field.focus(); field.setSelectionRange(field.value.length, field.value.length); return true;
     } } })]; } }),
-    StarterKit.configure({ link: false, underline: false }), Underline, ColoredHighlight, TextColor, TaskList, TaskItem.configure({ nested: true }), SmallText, CodeBlockControls,
+    StarterKit.configure({ link: false, underline: false }), Underline, ColoredHighlight, TextColor, TaskList, TaskItem.configure({ nested: true }), SmallText, CodeBoundary, QuoteKeys, InlineAtomDrag, CellTailClick, PasteInline, CodeBlockControls, CodeBlockView,
     TextAlign.extend({ addKeyboardShortcuts() { return {
       "Mod-Shift-l": () => alignText(this.editor, "left"),
       "Mod-Shift-e": () => alignText(this.editor, "center"),
       "Mod-Shift-r": () => alignText(this.editor, "right"),
     }; } }).configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: null }),
     Link.configure({ openOnClick: false, autolink: true, defaultProtocol: "https", protocols: ["http", "https", "mailto"], HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } }),
-    ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), SearchHighlight, LabelNode, FileAttachment, NoteLinkNode, BlockDrag,
+    ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), InlineImage, BlockIndent, SearchHighlight, LabelNode, FileAttachment, InlineFile, NoteLinkNode, BlockDrag,
   ], []);
   const options = useMemo(() => ({
     extensions, content: initialParts.body, immediatelyRender: false, shouldRerenderOnTransaction: false,
-    editorProps: { attributes: { class: "prose-editor", "aria-label": "笔记正文" }, handlePaste: (_view: import("@tiptap/pm/view").EditorView, event: ClipboardEvent, slice: Slice) => pasteHandler.current(event, slice) },
-    onUpdate: ({ editor: instance }: { editor: Editor }) => {
+    editorProps: { attributes: { class: "prose-editor", "aria-label": "笔记正文" }, handlePaste: (_view: import("@tiptap/pm/view").EditorView, event: ClipboardEvent, slice: Slice) => pasteHandler.current(event, slice),
+      handleDrop: (view: import("@tiptap/pm/view").EditorView, event: DragEvent, _slice: Slice, moved: boolean) => dropHandler.current(view, event, moved),
+      handleDOMEvents: {
+        dragover: (view: import("@tiptap/pm/view").EditorView, event: DragEvent) => { if (view.editable && event.dataTransfer?.types.includes("Files")) view.dom.closest(".editor-shell")?.classList.add("file-drop-active"); return false; },
+        dragleave: (view: import("@tiptap/pm/view").EditorView, event: DragEvent) => { const shell = view.dom.closest(".editor-shell"); if (shell && !shell.contains(event.relatedTarget as Node | null)) shell.classList.remove("file-drop-active"); return false; },
+        drop: (view: import("@tiptap/pm/view").EditorView, event: DragEvent) => {
+          view.dom.closest(".editor-shell")?.classList.remove("file-drop-active");
+          if (!view.editable && event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dropHandler.current(view, event, false); return true; }
+          return false;
+        },
+        dragend: (view: import("@tiptap/pm/view").EditorView) => { view.dom.closest(".editor-shell")?.classList.remove("file-drop-active"); return false; },
+      },
+    },
+    onUpdate: ({ editor: instance, transaction }: { editor: Editor; transaction: { getMeta: (key: string) => unknown } }) => {
+      // Folding a code block only changes the view state: it does not queue a save by itself and is written with the next real edit.
+      if (transaction.getMeta("uranus-fold-only")) return;
       setEditorError("");
       callbacks.current.onChange(joinNoteTitle(titleNode.current, instance.getJSON() as ContentNode));
     },
@@ -335,7 +466,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     const picker = (event: Event) => { const range = (event as CustomEvent<{ from: number; to: number }>).detail; setTablePicker({ anchor: editor.view.coordsAtPos(editor.state.selection.from), range }); };
     const keyboard = (event: KeyboardEvent) => {
       if (!editor.isEditable || event.isComposing || !(event.key === "F10" && event.shiftKey)) return;
-      const image = editor.state.selection instanceof NodeSelection && editor.state.selection.node.type.name === "image";
+      const image = editor.state.selection instanceof NodeSelection && ["image", "inlineImage"].includes(editor.state.selection.node.type.name);
       if (!image && !tableContext(editor)) return;
       event.preventDefault();
       editor.view.dom.dispatchEvent(new CustomEvent("uranus-table-menu", { detail: { kind: image ? "image" : "cell", anchor: editor.view.coordsAtPos(editor.state.selection.from) } }));
@@ -384,25 +515,36 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   const alignmentActive = (value: string) => {
     const selection = editor.state.selection;
     if (selection instanceof CellSelection) { let active = true; selection.forEachCell(node => { if ((node.attrs.textAlign ?? (node.type.name === "tableHeader" ? "center" : "left")) !== value) active = false; }); return active; }
-    return editor.isActive("image") ? editor.getAttributes("image").imageAlign === value : editor.isActive({ textAlign: value });
+    if (editor.isActive("image")) return editor.getAttributes("image").imageAlign === value;
+    let found = false, active = true;
+    editor.state.doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+      if (!["paragraph", "heading"].includes(node.type.name)) return true;
+      found = true;
+      let alignment = node.attrs.textAlign;
+      if (!alignment) {
+        const $pos = editor.state.doc.resolve(pos);
+        for (let depth = $pos.depth; depth > 0; depth--) {
+          const parent = $pos.node(depth);
+          if (["tableCell", "tableHeader"].includes(parent.type.name)) {
+            alignment = parent.attrs.textAlign ?? (parent.type.name === "tableHeader" ? "center" : "left");
+            break;
+          }
+        }
+      }
+      if ((alignment ?? "left") !== value) active = false;
+      return false;
+    });
+    return found && active;
   };
   const alignmentDisabled = (value: string) => readOnly || (!(editor.state.selection instanceof CellSelection) && !editor.isActive("image") && !editor.can().setTextAlign(value));
   const alignmentTarget = editor.state.selection instanceof CellSelection ? "所选单元格" : editor.isActive("image") ? "图片" : "段落或标题";
   const toggleReadOnly = () => {
     if (readOnlyBecauseDeleted) return;
     const next = !readOnly;
-    writePreference(preferenceKey, next ? "1" : "0");
+    if (!phone.current) writePreference(preferenceKey, next ? "1" : "0");
     setReadOnly(next);
   };
   const matches = findCount || searchHighlightKey.getState(editor.state)?.ranges.length || 0;
-  const copyCode = async () => {
-    const { $from } = editor.state.selection;
-    for (let depth = $from.depth; depth > 0; depth--) if ($from.node(depth).type.name === "codeBlock") {
-      try { await navigator.clipboard.writeText($from.node(depth).textContent); setEditorNotice("代码已复制"); }
-      catch { setEditorError("复制代码失败，请检查剪贴板权限"); }
-      return;
-    }
-  };
   const exportOriginal = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(note.content, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = `uranus-note-${note.id}-original.json`; link.click();
@@ -446,19 +588,42 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     setLinkDialog(null); setLinkActions(null);
   };
   const uploadImage = async (file: File, retry = false) => {
-    if (upload?.busy || readOnly) return;
+    if (upload?.busy || readOnly) return false;
     if (!retry) uploadBookmark.current = editor.state.selection.getBookmark();
     setUpload({ file, busy: true, error: "" });
     onUploadState?.(true);
     try {
       const attachment = await uploadAttachment(note.id, file);
-      if (editor.isDestroyed) return;
-      if (!editor.isEditable) { setUpload({ file, busy: false, error: "当前为阅读模式，请返回编辑后重试。" }); return; }
+      if (editor.isDestroyed) return false;
+      if (!editor.isEditable) { setUpload({ file, busy: false, error: "当前为阅读模式，请返回编辑后重试。" }); return false; }
       const selection = uploadBookmark.current?.resolve(editor.state.doc) ?? editor.state.selection;
-      const inserted = editor.chain().command(({ tr }) => { tr.setSelection(selection); return true; }).insertContent(attachmentNode(attachment)).run();
+      const inserted = attachment.mime.startsWith("image/") ? insertImage(editor, selection, attachment) : insertInlineFile(editor, selection, attachment);
       if (!inserted) throw new Error("附件已上传但未插入，请检查正文预算后重试。");
       uploadBookmark.current = null; setUpload(null); onUploadState?.(false); editor.view.focus();
-    } catch (error) { if (!editor.isDestroyed) { setUpload({ file, busy: false, error: (error as Error).message }); onUploadState?.(false); } }
+      return true;
+    } catch (error) { if (!editor.isDestroyed) { setUpload({ file, busy: false, error: (error as Error).message }); onUploadState?.(false); } return false; }
+  };
+  // Files dragged in from the file manager: images become inline images, whitelisted files become attachments, uploaded one by one in drop order.
+  dropHandler.current = (view, event, moved) => {
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (moved || !files.length || !event.dataTransfer?.types.includes("Files")) return false;
+    event.preventDefault();
+    if (readOnly) { setEditorNotice("当前为阅读模式，不能上传文件，请先进入编辑模式。"); return true; }
+    if (upload?.busy || dropBusy.current) { setEditorNotice("正在上传，请等当前文件上传完成后再拖入。"); return true; }
+    const imageTypes = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+    const accepted: File[] = [], rejected: File[] = [];
+    for (const original of files) {
+      const file = fileWithMime(original);
+      (imageTypes.includes(file.type) || Object.hasOwn(MIME_EXTENSIONS, file.type) ? accepted : rejected).push(file);
+    }
+    const rejectedNames = rejected.map(file => file.name);
+    const rejectedNotice = rejectedNames.length ? `不支持的文件类型：${rejectedNames.slice(0, 3).join("、")}${rejectedNames.length > 3 ? ` 等 ${rejectedNames.length} 个` : ""}` : "";
+    if (!accepted.length) { if (rejectedNotice) setEditorNotice(rejectedNotice); return true; }
+    const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+    if (at) view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(at.pos))));
+    dropBusy.current = true;
+    void (async () => { try { for (const file of accepted) if (!await uploadImage(file, false)) break; } finally { dropBusy.current = false; if (rejectedNotice) setEditorNotice(rejectedNotice); } })();
+    return true;
   };
   pasteHandler.current = (event, slice) => {
     if (readOnly) return false;
@@ -473,20 +638,33 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       }
     } catch (error) { event.preventDefault(); setEditorError((error as Error).message); return true; }
 
-    const files = Array.from(event.clipboardData?.files ?? []).filter(file => file.type.startsWith("image/"));
+    // Our own copy carries attachment-bearing HTML; prefer it over the PNG file so size/alignment survive.
+    const files = /data-attachment-id=/.test(html) ? [] : Array.from(event.clipboardData?.files ?? []).filter(file => file.type.startsWith("image/"));
     // File-only clipboard data produces an empty Fragment, whose JSON is null.
     const json = (slice.content.toJSON() ?? []) as ContentNode[];
     let hasExternal = false;
     const currentIds = new Set<string>();
-    const collect = (node: ContentNode) => { if (["image", "fileAttachment"].includes(node.type ?? "") && typeof node.attrs?.attachmentId === "string") currentIds.add(node.attrs.attachmentId); node.content?.forEach(collect); };
+    const collect = (node: ContentNode) => { if (["image", "inlineImage", "fileAttachment", "inlineFile"].includes(node.type ?? "") && typeof node.attrs?.attachmentId === "string") currentIds.add(node.attrs.attachmentId); node.content?.forEach(collect); };
     collect(editor.getJSON() as ContentNode);
+    const pasteCopies = new Set<string>();
     const transform = async (node: ContentNode): Promise<ContentNode | null> => {
-      if (node.type === "image" || node.type === "fileAttachment") {
+      if (node.type === "image" || node.type === "inlineImage" || node.type === "fileAttachment" || node.type === "inlineFile") {
         const id = typeof node.attrs?.attachmentId === "string" ? node.attrs.attachmentId : "";
-        const src = typeof node.attrs?.src === "string" ? node.attrs.src : "";
+        let src = typeof node.attrs?.src === "string" ? node.attrs.src : "";
+        // The async clipboard API rewrites relative URLs to absolute ones.
+        try { const url = new URL(src, location.href); if (url.origin === location.origin && id && url.pathname === `/api/attachments/${id}`) { src = url.pathname; node = { ...node, attrs: { ...node.attrs, src } }; } } catch { /* external URL */ }
+        if (["image", "inlineImage"].includes(node.type ?? "") && (!id || src !== `/api/attachments/${id}`)) { hasExternal = true; return null; }
         if (id && currentIds.has(id)) return node;
-        if (id && (node.type === "fileAttachment" || src === `/api/attachments/${id}`)) {
-          const attachment = await copyAttachment(id, note.id);
+        if (id && (node.type === "fileAttachment" || node.type === "inlineFile" || src === `/api/attachments/${id}`)) {
+          // Reuse this note's earlier copy of the same source while it is still referenced, so repeated pastes keep a single attachment.
+          const key = `${note.id}:${id}`, earlier = copiedAttachments.current.get(key);
+          let pending: Promise<AttachmentDto> | undefined;
+          if (earlier) { if (pasteCopies.has(key)) pending = earlier; else { const reused = await earlier.catch(() => null); if (reused && currentIds.has(reused.id)) pending = earlier; } }
+          if (!pending) { pending = copyAttachment(id, note.id); copiedAttachments.current.set(key, pending); pending.catch(() => { if (copiedAttachments.current.get(key) === pending) copiedAttachments.current.delete(key); }); }
+          pasteCopies.add(key);
+          const attachment = await pending;
+          if (node.type === "inlineImage") return { ...node, attrs: { ...node.attrs, attachmentId: attachment.id, src: attachment.url } };
+          if (node.type === "inlineFile") return { ...node, attrs: { ...node.attrs, attachmentId: attachment.id, fileName: attachment.fileName, size: attachment.size, mime: attachment.mime } };
           const copied = attachmentNode(attachment);
           return { ...node, ...copied, attrs: { ...node.attrs, ...copied.attrs } };
         }
@@ -497,7 +675,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       if (!children.length && !["paragraph", "tableCell", "tableHeader"].includes(node.type ?? "")) return null;
       return { ...node, content: children };
     };
-    if (!files.length && !json.some(node => { let found = false; const scan = (value: ContentNode) => { if (["image", "fileAttachment"].includes(value.type ?? "")) found = true; value.content?.forEach(scan); }; scan(node); return found; })) return false;
+    if (!files.length && !json.some(node => { let found = false; const scan = (value: ContentNode) => { if (["image", "inlineImage", "fileAttachment", "inlineFile"].includes(value.type ?? "")) found = true; value.content?.forEach(scan); }; scan(node); return found; })) return false;
     event.preventDefault();
     uploadBookmark.current = editor.state.selection.getBookmark();
     const run = () => { void (async () => {
@@ -506,7 +684,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       try {
         if (files.length) {
           const stripImages = (node: ContentNode): ContentNode | null => {
-            if (node.type === "image") return null;
+            if (node.type === "image" || node.type === "inlineImage") return null;
             if (!node.content) return node;
             const children = node.content.map(stripImages).filter((child): child is ContentNode => child !== null);
             if (!children.length && !["paragraph", "tableCell", "tableHeader"].includes(node.type ?? "")) return null;
@@ -525,7 +703,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
             const attachment = await uploadAttachment(note.id, file);
             if (editor.isDestroyed || !editor.isEditable) throw new Error("笔记已切换或当前不可编辑，图片没有插入正文");
             const selection = uploadBookmark.current?.resolve(editor.state.doc) ?? editor.state.selection;
-            editor.chain().command(({ tr }) => { tr.setSelection(selection); return true; }).insertContent({ type: "image", attrs: { src: attachment.url, attachmentId: attachment.id, alt: attachment.fileName } }).run();
+            insertImage(editor, selection, attachment);
             uploadBookmark.current = editor.state.selection.getBookmark();
             failedFile = undefined;
           }
@@ -549,26 +727,29 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     run();
     return true;
   };
-  const titleField = <textarea ref={titleFieldRef} className={`note-header-title${findTitleActive ? " find-title-current" : ""}`} aria-label="笔记标题" placeholder="添加标题" rows={1} value={titleValue} readOnly={readOnly} title={titleValue || "添加标题"}
+  const titleField = <span className={`note-title-wrap${titleFocused ? " is-focused" : ""}`}><textarea ref={titleFieldRef} className={`note-header-title${findTitleActive ? " find-title-current" : ""}`} aria-label="笔记标题" placeholder="添加标题" rows={1} value={titleValue} readOnly={readOnly} title={titleValue || "添加标题"}
       onChange={event => {
         const value = event.target.value;
         titleNode.current = updateTitle(titleNode.current, value);
         setTitleValue(value);
         onChange(joinNoteTitle(titleNode.current, editor.getJSON() as ContentNode));
       }}
-      onBlur={() => { void onPersistLocal(); }}
+      onFocus={() => setTitleFocused(true)}
+      onBlur={() => { setTitleFocused(false); void onPersistLocal(); }}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); editor.commands.focus("start"); }
-      }} />;
+      }} /><span className={`note-title-ellipsis${titleValue ? "" : " is-empty"}`} aria-hidden="true">{titleValue || "添加标题"}</span></span>;
+  const modeControl = readOnlyBecauseDeleted
+    ? <span className="readonly-indicator" role="status" title="最近删除中的笔记不可编辑">只读模式</span>
+    : <button type="button" className={`mode-toggle${readOnly ? " is-readonly" : ""}`} aria-label={readOnly ? "切换到编辑模式" : "切换到只读模式"} title={`${readOnly ? "点击进入编辑" : "点击切换为只读，防止误触"}（Alt+P）`} onClick={toggleReadOnly}><Eye /></button>;
   return <div className={`editor-shell width-${widthMode} font-size-${editorFontSize} ${readOnly ? "readonly" : ""} ${showRowNumbers ? "show-table-row-numbers" : ""}`}>
     <h1 className="print-note-title">{titleValue}</h1>
-    {titleHost ? createPortal(<>{titleField}{readOnly && <span className="readonly-indicator" role="status" title={readOnlyBecauseDeleted ? "最近删除中的笔记不可编辑" : "用于防止误触，不是安全权限"}>只读模式</span>}</>, titleHost) : <>{titleField}{readOnly && <span className="readonly-indicator" role="status">只读模式</span>}</>}
+    {titleHost ? createPortal(titleField, titleHost) : titleField}
+    <AttachmentPreviewHost />
+    {modeHost ? createPortal(modeControl, modeHost) : !titleHost && modeControl}
     <ReactiveToolbar editor={editor}>{() => {
-      let indentItem: string | null = null;
-      const { $from } = editor.state.selection;
-      for (let depth = $from.depth; depth > 0; depth--) { const name = $from.node(depth).type.name; if (name === "listItem" || name === "taskItem") { indentItem = name; break; } }
-      const canIndent = !readOnly && !editor.isActive("codeBlock") && !(editor.state.selection instanceof CellSelection) && !!indentItem;
+      const indent = readOnly ? { increase: false, decrease: false } : indentAvailability(editor);
       return <div className="format-toolbar" aria-label={readOnly ? "阅读工具栏" : "格式工具栏"} onFocusCapture={event => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })}>
       <Tool label="撤销" disabled={readOnly} onClick={() => editor.chain().focus().undo().run()}><Undo2 /></Tool>
       <Tool label="重做" disabled={readOnly} onClick={() => editor.chain().focus().redo().run()}><Redo2 /></Tool>
@@ -590,23 +771,25 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       <span className="separator" />
       <Tool label="链接" disabled={readOnly} active={editor.isActive("link")} onClick={() => openLinkDialog()}><Link2 /></Tool>
       <Tool label="表格" hint={tableContext(editor) ? "暂不支持嵌套表格" : "插入表格"} disabled={readOnly || !!tableContext(editor)} onClick={() => setTablePicker(v => v ? null : { anchor: editor.view.dom.closest(".editor-shell")!.querySelector<HTMLElement>('[aria-label="表格"]')! })}><Table2 /></Tool>
-      <label className={`file-tool ${readOnly || upload?.busy ? "disabled" : ""}`} title="上传图片" aria-label="上传图片"><ImagePlus /><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={readOnly || upload?.busy} onChange={async (event) => {
-        const file = event.target.files?.[0];
+      <label className={`file-tool ${readOnly || upload?.busy ? "disabled" : ""}`} title="上传图片" aria-label="上传图片"><ImagePlus /><input type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" disabled={readOnly || upload?.busy} onChange={async (event) => {
+        const files = Array.from(event.target.files ?? []);
         event.target.value = "";
-        if (!file) return;
-        await uploadImage(file);
+        for (const file of files) if (!await uploadImage(file, false)) break;
       }} /></label>
       <button type="button" aria-label="更多格式与插入" title="更多格式与插入" aria-haspopup="dialog" aria-expanded={Boolean(morePopup)} disabled={readOnly} className={morePopup ? "active" : ""} onMouseDown={event => event.preventDefault()} onClick={event => setMorePopup(morePopup ? null : event.currentTarget)}><Plus /></button>
       {morePopup && !readOnly && <Popup anchor={morePopup} title="更多格式与插入" className="toolbar-more-popup" close={() => setMorePopup(null)}>
-        <div className="toolbar-more-actions" onClick={event => { if ((event.target as HTMLElement).closest("button:not(:disabled)")) setMorePopup(null); }}>
+        <div className="toolbar-more-actions" onClick={event => {
+          const button = (event.target as HTMLElement).closest("button:not(:disabled)");
+          // Indent changes are often repeated, so those two keep the menu open.
+          if (button && !["增加缩进", "减少缩进"].includes(button.getAttribute("aria-label") ?? "")) setMorePopup(null);
+        }}>
           <p className="toolbar-menu-heading">文字格式</p>
       <Tool showLabel label="删除线" disabled={readOnly} active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
       <Tool showLabel label="行内代码" disabled={readOnly} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
       <Tool showLabel label="代码块" disabled={readOnly || !editor.can().toggleCodeBlock()} active={editor.isActive("codeBlock")} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Braces /></Tool>
-      <Tool showLabel label="复制代码" hint="仅在代码块内可用" disabled={!editor.isActive("codeBlock")} onClick={() => void copyCode()}><Clipboard /></Tool>
           <p className="toolbar-menu-heading">段落与列表</p>
-      <Tool showLabel label="增加缩进" hint="将列表项缩进一级" disabled={!canIndent || !editor.can().sinkListItem(indentItem!)} onClick={() => { if (indentItem) editor.chain().focus().sinkListItem(indentItem).run(); }}><IndentIncrease /></Tool>
-      <Tool showLabel label="减少缩进" hint="将列表项提升一级；最外层退出列表" disabled={!canIndent || !editor.can().liftListItem(indentItem!)} onClick={() => { if (indentItem) editor.chain().focus().liftListItem(indentItem).run(); }}><IndentDecrease /></Tool>
+      <Tool showLabel label="增加缩进" hint="列表项嵌套一级；段落和标题增加缩进（最多 6 级）" disabled={!indent.increase} onClick={() => changeIndent(editor, 1)}><IndentIncrease /></Tool>
+      <Tool showLabel label="减少缩进" hint="列表项提升一级（最外层退出列表）；段落和标题减少缩进" disabled={!indent.decrease} onClick={() => changeIndent(editor, -1)}><IndentDecrease /></Tool>
       <Tool showLabel label="引用" disabled={readOnly} active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote /></Tool>
           <p className="toolbar-menu-heading">插入</p>
       <Tool showLabel label="分隔线" disabled={readOnly} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus /></Tool>
@@ -619,7 +802,6 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       <span className="spacer" />
       <Tool label="笔记大纲" disabled={headings(editor).length === 0} onClick={() => { const button = editor.view.dom.closest(".editor-shell")!.querySelector<HTMLElement>('[aria-label="笔记大纲"]')!, rect = button.getBoundingClientRect(); setOutline(pointAnchor(button, rect.left, rect.bottom)); }}><ListTree /></Tool>
       <Tool label={widthMode === "fluid" ? "切换舒适阅读" : "切换自适应宽版"} active={widthMode === "reading"} onClick={() => setWidthMode(widthMode === "fluid" ? "reading" : "fluid")}><MoveHorizontal /></Tool>
-      {!readOnlyBecauseDeleted && <Tool label={readOnly ? "退出只读" : "只读模式"} active={readOnly} onClick={toggleReadOnly}><Eye /></Tool>}
     </div>; }}</ReactiveToolbar>
     {editorError && <div className="error-banner" role="alert">{editorError}</div>}
     {editorNotice && <div className="editor-notice" role="status">{editorNotice}<button aria-label="关闭提示" onClick={() => setEditorNotice("")}>×</button></div>}
@@ -648,7 +830,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
 
 // The editor owns its document until an explicit epoch remount (restore/conflict).
 // Saved query snapshots must not replace live composing DOM or callback options.
-export const NoteEditor = memo(NoteEditorView, (a, b) => a.note.id === b.note.id && a.titleHost === b.titleHost && a.readOnlyBecauseDeleted === b.readOnlyBecauseDeleted);
+export const NoteEditor = memo(NoteEditorView, (a, b) => a.note.id === b.note.id && a.titleHost === b.titleHost && a.modeHost === b.modeHost && a.readOnlyBecauseDeleted === b.readOnlyBecauseDeleted);
 
 function ReactiveToolbar({ editor, children }: { editor: Editor; children: () => React.ReactNode }) {
   const subscribe = useMemo(() => (listener: () => void) => { editor.on("transaction", listener); return () => { editor.off("transaction", listener); }; }, [editor]);

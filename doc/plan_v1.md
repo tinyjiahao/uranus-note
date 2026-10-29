@@ -1,5 +1,7 @@
 # Uranus v1 — Cloudflare 原生开源笔记应用需求规格
 
+> 历史基线说明（v8 审查）：保留原始需求与 P2 验收目标，不因尚未实现删除。现行鉴权、运维权限以 plan_v6、plan_v7 为准；默认 7 天会话以 plan_v8 为准；历史 API_TOKEN 与普通 Cookie 运维方案已被替代。实际交付状态见各 implementation 文档，样式当前使用自托管 CSS。
+
 > 日期：2026-10-24。状态：用于从零实现的统一需求基线，不代表当前代码已全部完成。
 > 技术架构：React + Vite SPA、Hono API、Cloudflare Workers、D1 和私有 R2。
 > 本文是产品、工程与验收的完整需求基线。AGENTS.md、README、实现代码和部署说明应与本文保持一致。

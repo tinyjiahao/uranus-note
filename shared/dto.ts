@@ -47,3 +47,9 @@ export type OperationReceipt = {
 
 export const EMPTY_CONTENT: ContentNode = { type: "doc", content: [{ type: "paragraph" }] };
 export { CURRENT_SCHEMA_VERSION as CONTENT_SCHEMA_VERSION } from "./schemaVersion";
+
+export type StatBucket = { count: number; size: number };
+export type NoteStatsDto = {
+  attachments: StatBucket & { images: StatBucket; files: StatBucket; historyOnly: StatBucket; awaitingCleanup: StatBucket };
+  versions: { count: number; latestAt: number | null };
+};

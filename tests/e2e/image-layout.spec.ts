@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 
+// New uploads are inline images; this suite covers block-image alignment, so convert the one just inserted.
+async function toBlock(page: Page, scope: string) {
+  await page.locator(`${scope} .inline-image img`).first().click({ button: "right" });
+  await page.getByRole("button", { name: "转为独立图片（单独一行）" }).click();
+}
+
 async function upload(page: Page, width = 120) {
   const data = await page.evaluate(width => {
     const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = 80;
@@ -15,7 +21,7 @@ test("images align independently in body and table cells and persist in readonly
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByTitle("新建笔记 (⌘N)").click();
   const editor = page.locator(".prose-editor");
-  await editor.fill("图片布局测试"); await editor.press("Enter"); await upload(page);
+  await editor.fill("图片布局测试"); await editor.press("Enter"); await upload(page); await toBlock(page, ".prose-editor");
   const bodyImage = editor.locator("figure").first();
   const imageAttributes = await bodyImage.locator("img").getAttribute("data-attachment-id");
   await editor.getByRole("button", { name: "拖动图片", exact: true }).press("Alt+ArrowUp");
@@ -54,14 +60,14 @@ test("images align independently in body and table cells and persist in readonly
   await editor.press("ControlOrMeta+End"); await editor.press("ArrowDown"); await editor.press("Enter");
   await page.getByRole("button", { name: "表格", exact: true }).click();
   await page.getByRole("button", { name: "2 行 2 列", exact: true }).click();
-  await editor.locator("th").first().click(); await upload(page, 1200);
+  await editor.locator("th").first().click(); await page.waitForTimeout(300); await upload(page, 1200); await toBlock(page, ".prose-editor th");
   const headerImage = editor.locator("th figure").first();
   await expect(headerImage.locator("img")).toBeVisible();
   await headerImage.locator("img").click();
   await page.getByRole("button", { name: "靠左对齐", exact: true }).click();
   await expect(headerImage).toHaveCSS("text-align", "left");
   expect(await headerImage.evaluate(el => el.querySelector("img")!.getBoundingClientRect().width <= el.closest("th")!.getBoundingClientRect().width)).toBe(true);
-  await editor.locator("td").first().click(); await upload(page);
+  await editor.locator("td").first().click(); await page.waitForTimeout(300); await upload(page); await toBlock(page, ".prose-editor td");
   const cellImage = editor.locator("td figure").first();
   await cellImage.locator("img").click();
   await page.getByRole("button", { name: "居中对齐", exact: true }).click();
@@ -78,7 +84,7 @@ test("images align independently in body and table cells and persist in readonly
   await expect(headerImage).toHaveCSS("text-align", "left");
   await expect(cellImage).toHaveCSS("text-align", "center");
   await cellImage.locator("img").click();
-  await page.getByRole("button", { name: "只读模式", exact: true }).click();
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click();
   for (const name of ["靠左对齐", "居中对齐", "靠右对齐"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
   for (const handle of await editor.locator(".image-resize-handle").all()) await expect(handle).toBeHidden();
   await page.setViewportSize({ width: 768, height: 900 });

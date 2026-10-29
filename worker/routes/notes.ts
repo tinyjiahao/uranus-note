@@ -4,6 +4,7 @@ import { createNoteSchema, patchNoteSchema } from "../../shared/validation";
 import { ApiError } from "../lib/http";
 import { changeDeletedState, createManualVersion, createNote, getNote, getVersion, listNotes, listVersions, patchNote, restoreVersion } from "../services/notes";
 import type { Env, AppVariables } from "../types";
+import { getNoteStats } from "../services/noteStats";
 import { queueEmptyTrash, queueHardDelete } from "../services/maintenance";
 
 export const noteRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -40,6 +41,7 @@ noteRoutes.post("/empty-trash", async (c) => {
   return c.json(await queueEmptyTrash(c.env.DB, parsed.data.operation_id, c.get("accountSession")), 202);
 });
 
+noteRoutes.get("/:id/stats", async (c) => c.json(await getNoteStats(c.env.DB, idOf(c.req.param("id")), c.get("accountSession"))));
 noteRoutes.get("/:id", async (c) => c.json(await getNote(c.env.DB, idOf(c.req.param("id")), c.get("accountSession"))));
 noteRoutes.patch("/:id", async (c) => {
   const parsed = patchNoteSchema.safeParse(await c.req.json().catch(() => null));

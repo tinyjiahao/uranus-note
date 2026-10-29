@@ -71,7 +71,7 @@ describe("v6 server session foundation (not wired to public routes yet)", () => 
     expect(JSON.stringify(row)).not.toContain(issued.token.split(".")[0]);
     expect(await readAccountSession(env.DB, `${secret}-rotated`, issued.token)).toBeNull();
     expect(await readAccountSession(env.DB, secret, `${issued.token}x`)).toBeNull();
-    expect(issued.ttl).toBe(86400);
+    expect(issued.ttl).toBe(604800);
     await revokeAccountSession(env.DB, session!);
     expect(await readAccountSession(env.DB, secret, issued.token)).toBeNull();
     await expireAccountSessions(env.DB);

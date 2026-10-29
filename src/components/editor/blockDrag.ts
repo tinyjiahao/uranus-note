@@ -25,26 +25,58 @@ export const BlockDrag = Extension.create({
     const editor = this.editor;
     let active: { from: number; doc: Node; x: number; y: number; pointer: number; target: number; moved: boolean } | undefined;
     let guide: HTMLDivElement | undefined;
+    let pointerX = 0;
     let frame = 0;
     let pointerY = 0;
     let currentView: EditorView;
+    let alignFrame = 0;
+    const alignHandles = (view: EditorView) => {
+      alignFrame = 0;
+      const anchors = [...view.dom.querySelectorAll<HTMLElement>(":scope > .block-drag-anchor")];
+      const tops = anchors.map(anchor => {
+        const next = anchor.nextElementSibling;
+        const handle = anchor.firstElementChild;
+        if (!(next instanceof HTMLElement) || !(handle instanceof HTMLElement) || next.classList.contains("block-drag-anchor")) return undefined;
+        // Attachments are laid out inline: the handle becomes a small corner badge on the attachment's own top-left corner instead of hanging in the gap to the previous one.
+        const corner = next.matches(".node-fileAttachment");
+        for (const [prop, value] of [["left", "-4px"], ["width", "18px"], ["height", "18px"]] as const) handle.style[prop] = corner ? value : "";
+        if (corner) { handle.style.top = "-4px"; return undefined; }
+        // Tables keep the stylesheet default so the handle does not cover the first row's menu handle.
+        if (next.matches(".tableWrapper")) { handle.style.top = ""; return undefined; }
+        const line = next;
+        const style = getComputedStyle(line);
+        const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+        const edge = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.borderTopWidth) || 0);
+        return { handle, top: line.getBoundingClientRect().top - anchor.getBoundingClientRect().top + edge + lineHeight / 2 - handle.offsetHeight / 2 };
+      });
+      for (const item of tops) if (item) item.handle.style.top = `${Math.round(item.top)}px`;
+    };
+    const scheduleAlign = (view: EditorView) => { if (!alignFrame) alignFrame = requestAnimationFrame(() => alignHandles(view)); };
     const cancel = () => { active = undefined; guide?.remove(); guide = undefined; cancelAnimationFrame(frame); frame = 0; };
-    const locate = (view: EditorView, y: number) => {
+    // Blocks laid out inline (file attachments sit side by side) are located in two dimensions and shown with a vertical drop caret between them.
+    const locate = (view: EditorView, y: number, x = pointerX) => {
       let target = view.state.doc.content.size;
       let top = view.dom.getBoundingClientRect().top;
+      let caret: { left: number; top: number; height: number } | undefined;
       let found = false;
       view.state.doc.forEach((node, pos) => {
         if (found) return;
         const element = view.nodeDOM(pos);
         if (!(element instanceof HTMLElement)) return;
         const rect = element.getBoundingClientRect();
+        if (element.classList.contains("node-fileAttachment")) {
+          if (y < rect.top || (y <= rect.bottom && x < rect.left + rect.width / 2)) { target = pos; caret = { left: rect.left - 5, top: rect.top, height: rect.height }; found = true; }
+          else { target = pos + node.nodeSize; caret = { left: rect.right + 4, top: rect.top, height: rect.height }; top = rect.bottom; }
+          return;
+        }
+        caret = undefined;
         if (y < rect.top + rect.height / 2) { target = pos; top = rect.top; found = true; }
         else { target = pos + node.nodeSize; top = rect.bottom; }
       });
       if (active) active.target = target;
       if (guide) {
         const rect = view.dom.getBoundingClientRect();
-        guide.style.cssText = `left:${rect.left + 28}px;top:${top}px;width:${Math.max(0, rect.width - 56)}px`;
+        guide.style.cssText = caret ? `left:${caret.left}px;top:${caret.top}px;width:3px;height:${caret.height}px` : `left:${rect.left + 28}px;top:${top}px;width:${Math.max(0, rect.width - 56)}px`;
       }
     };
     const scroll = () => {
@@ -62,10 +94,14 @@ export const BlockDrag = Extension.create({
         decorations(state) {
           if (!editor.options.editable) return DecorationSet.empty;
           const decorations: Decoration[] = [];
+          // Only the top-level block holding the caret/selection shows its handle (CSS also requires editor focus or handle focus).
+          const { $head } = state.selection;
+          const currentPos = $head.depth >= 1 ? $head.before(1) : state.selection.from;
           state.doc.forEach((node, pos) => {
+            const current = pos === currentPos;
             decorations.push(Decoration.widget(pos, (view, getPos) => {
               const wrapper = document.createElement("span");
-              wrapper.className = "block-drag-anchor";
+              wrapper.className = `block-drag-anchor${current ? " is-current" : ""}`;
               wrapper.contentEditable = "false";
               const handle = document.createElement("button");
               handle.type = "button"; handle.className = "block-drag-handle";
@@ -89,18 +125,47 @@ export const BlockDrag = Extension.create({
                 if (target !== undefined) { moveBlock(view, from, target); view.focus(); }
               };
               wrapper.appendChild(handle); return wrapper;
-            }, { side: -1, key: `block-drag-${pos}-${node.type.name}`, stopEvent: () => true, ignoreSelection: true }));
+            }, { side: -1, key: `block-drag-${pos}-${node.type.name}-${current ? "current" : "idle"}`, stopEvent: () => true, ignoreSelection: true }));
           });
           return DecorationSet.create(state.doc, decorations);
         },
       },
       view(view) {
         currentView = view;
+        const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(() => scheduleAlign(view));
+        resizeObserver?.observe(view.dom);
+        scheduleAlign(view);
+        // The handle follows the mouse: the top-level block whose row contains the pointer's y (left margin included) shows its handle.
+        let hovered: HTMLElement | null = null, lastY: number | null = null, lastX = 0, hoverFrame = 0;
+        const setHovered = (anchor: HTMLElement | null) => {
+          if (hovered === anchor) return;
+          hovered?.classList.remove("is-hover"); hovered = anchor; hovered?.classList.add("is-hover");
+        };
+        const updateHover = () => {
+          hoverFrame = 0;
+          if (active || lastY === null || !view.editable) return;
+          let found: HTMLElement | null = null;
+          for (const anchor of view.dom.querySelectorAll<HTMLElement>(":scope > .block-drag-anchor")) {
+            const next = anchor.nextElementSibling;
+            if (!(next instanceof HTMLElement) || next.classList.contains("block-drag-anchor")) continue;
+            const rect = next.getBoundingClientRect();
+            if (rect.top > lastY) break;
+            // Attachments share a row: only those at or left of the pointer qualify, so the one under the pointer wins.
+            if (next.classList.contains("node-fileAttachment") && lastY <= rect.bottom && lastX < rect.left - 6) continue;
+            found = anchor;
+          }
+          setHovered(found);
+        };
+        const scheduleHover = () => { if (!hoverFrame) hoverFrame = requestAnimationFrame(updateHover); };
+        const mouseMove = (event: MouseEvent) => { lastY = event.clientY; lastX = event.clientX; scheduleHover(); };
+        const mouseLeave = () => { lastY = null; if (!active) setHovered(null); };
+        const scroller = view.dom.closest(".editor-content");
+        view.dom.addEventListener("mousemove", mouseMove); view.dom.addEventListener("mouseleave", mouseLeave); scroller?.addEventListener("scroll", scheduleHover, { passive: true });
         const move = (event: PointerEvent) => {
           if (!active || event.pointerId !== active.pointer) return;
           if (!view.editable || !active.doc.eq(view.state.doc)) { cancel(); return; }
           if (!active.moved && Math.hypot(event.clientX - active.x, event.clientY - active.y) < 5) return;
-          event.preventDefault(); pointerY = event.clientY;
+          event.preventDefault(); pointerY = event.clientY; pointerX = event.clientX;
           if (!active.moved) { active.moved = true; guide = document.createElement("div"); guide.className = "block-drop-guide"; document.body.appendChild(guide); frame = requestAnimationFrame(scroll); }
           locate(view, pointerY);
         };
@@ -117,8 +182,8 @@ export const BlockDrag = Extension.create({
         document.addEventListener("pointermove", move, { passive: false }); document.addEventListener("pointerup", up);
         document.addEventListener("pointercancel", cancel); document.addEventListener("keydown", key, true); window.addEventListener("blur", cancel);
         return {
-          update(updated) { currentView = updated; if (active && (!updated.editable || !active.doc.eq(updated.state.doc))) cancel(); },
-          destroy() { cancel(); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", cancel); document.removeEventListener("keydown", key, true); window.removeEventListener("blur", cancel); },
+          update(updated) { currentView = updated; scheduleAlign(updated); if (active && (!updated.editable || !active.doc.eq(updated.state.doc))) cancel(); },
+          destroy() { cancel(); cancelAnimationFrame(hoverFrame); view.dom.removeEventListener("mousemove", mouseMove); view.dom.removeEventListener("mouseleave", mouseLeave); scroller?.removeEventListener("scroll", scheduleHover); cancelAnimationFrame(alignFrame); alignFrame = 0; resizeObserver?.disconnect(); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", cancel); document.removeEventListener("keydown", key, true); window.removeEventListener("blur", cancel); },
         };
       },
     })];

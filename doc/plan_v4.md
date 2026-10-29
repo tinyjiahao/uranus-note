@@ -1,6 +1,6 @@
 # Uranus v4 — 可安装独立窗口最小改造需求
 
-> 日期：2026-10-25。状态：待实施，本文不代表功能已经完成。
+> 日期：2026-10-25。状态：已实现，真实 macOS Chrome 安装与 Dock 启动待人工验收（见 implementation-v4.md）。
 > 基线：在现有 React SPA + Cloudflare Worker 应用上增量改进；未变更的约束继续遵循 plan_v1、plan_v2、plan_v3 和 AGENTS.md。
 > 本文中的 Dock 指 macOS 程序坞，不是 Docker。
 

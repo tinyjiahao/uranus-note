@@ -9,7 +9,13 @@ async function open(page: Page) {
   await expect(page.locator(".prose-editor")).toBeVisible();
 }
 async function setBody(page: Page, content: unknown) {
-  await page.locator(".prose-editor").evaluate((element, content) => { const editor = (element as HTMLElement & { editor: Editor }).editor; editor.commands.setContent(content as never); editor.commands.focus("end"); }, content);
+  await page.locator(".prose-editor").evaluate((element, content) => {
+    const editor = (element as HTMLElement & { editor: Editor }).editor;
+    editor.commands.setContent(content as never);
+    const singleCode = (content as import("../../shared/dto").ContentNode).content?.length === 1 && (content as import("../../shared/dto").ContentNode).content?.[0]?.type === "codeBlock";
+    editor.commands.focus(singleCode ? "start" : "end");
+  }, content);
+  await expect(page.locator(".prose-editor")).toBeFocused();
 }
 test("label popup, file upload, note link, outline and exports survive saving", async ({ page }) => {
   await open(page); const body = page.locator(".prose-editor"), title = page.getByLabel("笔记标题", { exact: true });
@@ -28,9 +34,9 @@ test("label popup, file upload, note link, outline and exports survive saving", 
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "插入标签", exact: true }).click(); await page.getByLabel("标签文字").press("Escape"); await expect(body).toBeFocused();
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click();
   await page.locator('[aria-label="上传文件附件"] input').setInputFiles({ name: "fixture.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\nfixture") });
-  await expect(body.locator(".file-attachment")).toContainText("fixture.pdf");
+  await expect(body.locator(".inline-file")).toContainText("fixture.pdf");
   await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器");
-  await page.reload(); await expect(body.locator(".label-chip")).toHaveText("已修改标签"); await expect(body.locator(".file-attachment")).toContainText("fixture.pdf");
+  await page.reload(); await expect(body.locator(".label-chip")).toHaveText("已修改标签"); await expect(body.locator(".inline-file")).toContainText("fixture.pdf");
   await expect(body.locator(".label-chip")).toHaveAttribute("data-color", "green");
   await body.locator("p").first().click(); await page.keyboard.press("End");
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "插入笔记链接", exact: true }).click(); await page.getByLabel("搜索笔记标题").fill("V7 feature fixture");
@@ -54,6 +60,7 @@ test("keyboard input rules, nested task/list Tab and title focus fallback", asyn
   await open(page); const body = page.locator(".prose-editor"), title = page.getByLabel("笔记标题", { exact: true });
   await title.fill("标题"); await title.press("Enter"); await expect(body).toBeFocused();
   await body.fill("保留正文"); await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.commands.focus("start"));
+  await expect(body).toBeFocused();
   expect(await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.state.selection.from)).toBe(1);
   await page.keyboard.press("Backspace"); await expect(title).toBeFocused(); await expect(body).toHaveText("保留正文");
   for (const prefix of ["[ ] ", "[x] "]) {
@@ -64,7 +71,8 @@ test("keyboard input rules, nested task/list Tab and title focus fallback", asyn
   }
   await setBody(page, { type: "doc", content: [{ type: "paragraph" }] }); await page.keyboard.type("==highlight=="); await expect(body.locator("mark")).toHaveText("highlight");
   await setBody(page, { type: "doc", content: [{ type: "paragraph" }] }); await page.keyboard.type("- first"); await page.keyboard.press("Enter"); await page.keyboard.type("second"); await page.keyboard.press("Tab"); await expect(body.locator("li li")).toHaveCount(1); await page.keyboard.press("Shift+Tab"); await expect(body.locator("li li")).toHaveCount(0);
-  await setBody(page, { type: "doc", content: [{ type: "codeBlock" }] }); await page.keyboard.press("Tab"); await expect(body.locator("code")).toHaveText("  "); await page.keyboard.press("Shift+Tab"); await expect(body.locator("code")).toHaveText("");
+  const codeText = () => body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.state.doc.textContent);
+  await setBody(page, { type: "doc", content: [{ type: "codeBlock" }] }); await page.keyboard.press("Tab"); await expect.poll(codeText).toBe("  "); await page.keyboard.press("Shift+Tab"); await expect.poll(codeText).toBe("");
   await setBody(page, { type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Heading" }] }] });
   await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.commands.focus("start")); await page.keyboard.press("Backspace"); await expect(body).toBeFocused(); await expect(body.locator("h2")).toHaveCount(0);
   await page.keyboard.press("Backspace"); await expect(title).toBeFocused();
@@ -79,15 +87,15 @@ test("table keyboard rules and cross-note file paste retain valid references", a
   await setBody(page, { type: "doc", content: [{ type: "paragraph" }] });
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click();
   await page.locator('[aria-label="上传文件附件"] input').setInputFiles({ name: "copy.txt", mimeType: "text/plain", buffer: Buffer.from("copy fixture") });
-  await expect(body.locator(".file-attachment")).toBeVisible();
-  const source = await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.getJSON().content?.find(node => node.type === "fileAttachment")?.attrs?.attachmentId);
+  await expect(body.locator(".inline-file")).toBeVisible();
+  const source = await body.evaluate(el => ((el as HTMLElement & { editor: Editor }).editor.getJSON() as import("../../shared/dto").ContentNode).content?.flatMap(node => node.content ?? []).find(node => node.type === "inlineFile")?.attrs?.attachmentId);
   const html = await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.getHTML());
   await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器");
-  await page.getByTitle("新建笔记 (⌘N)").click(); await expect(body.locator(".file-attachment")).toHaveCount(0);
+  await page.getByTitle("新建笔记 (⌘N)").click(); await expect(body.locator(".inline-file")).toHaveCount(0);
   await body.evaluate((el, html) => { const data = new DataTransfer(); data.setData("text/html", html); el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true })); }, html);
-  await expect(body.locator(".file-attachment")).toContainText("copy.txt");
-  expect(await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.getJSON().content?.find(node => node.type === "fileAttachment")?.attrs?.attachmentId)).not.toBe(source);
-  await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器"); await page.reload(); await expect(body.locator(".file-attachment")).toContainText("copy.txt");
+  await expect(body.locator(".inline-file")).toContainText("copy.txt");
+  expect(await body.evaluate(el => ((el as HTMLElement & { editor: Editor }).editor.getJSON() as import("../../shared/dto").ContentNode).content?.flatMap(node => node.content ?? []).find(node => node.type === "inlineFile")?.attrs?.attachmentId)).not.toBe(source);
+  await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器"); await page.reload(); await expect(body.locator(".inline-file")).toContainText("copy.txt");
 });
 
 test("serialized labels validate on paste, IME Enter does not submit, missing note links degrade", async ({ page }) => {
@@ -140,8 +148,8 @@ test("ZIP export reports missing files and cancellation without downloading part
   await open(page); await page.getByLabel("笔记标题", { exact: true }).fill("ZIP failure fixture");
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click();
   await page.locator('[aria-label="上传文件附件"] input').setInputFiles({ name: "zip.txt", mimeType: "text/plain", buffer: Buffer.from("zip fixture") });
-  await expect(page.locator(".file-attachment")).toBeVisible(); await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器");
-  const fileUrl = await page.locator(".prose-editor").evaluate(el => "/api/attachments/" + (el as HTMLElement & { editor: Editor }).editor.getJSON().content?.find(node => node.type === "fileAttachment")?.attrs?.attachmentId);
+  await expect(page.locator(".inline-file")).toBeVisible(); await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器");
+  const fileUrl = await page.locator(".prose-editor").evaluate(el => "/api/attachments/" + ((el as HTMLElement & { editor: Editor }).editor.getJSON() as import("../../shared/dto").ContentNode).content?.flatMap(node => node.content ?? []).find(node => node.type === "inlineFile")?.attrs?.attachmentId);
   await page.route(`**${fileUrl}`, route => route.fulfill({ status: 503, json: { error: { code: "ATTACHMENT_OBJECT_MISSING" } } }));
   let downloads = 0; page.on("download", () => downloads++);
   await page.getByRole("button", { name: "笔记更多", exact: true }).click(); await page.getByRole("button", { name: "导出 ZIP（含附件）", exact: true }).click();

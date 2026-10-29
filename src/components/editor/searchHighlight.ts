@@ -73,7 +73,12 @@ export function updateEditorSearch(editor: Editor, query: string, active: number
   const state = searchHighlightKey.getState(editor.state);
   const range = state?.ranges[state.active];
   if (range) {
-    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, range.from, range.to)).scrollIntoView());
+    const tr = editor.state.tr;
+    const $match = tr.doc.resolve(range.from);
+    for (let depth = $match.depth; depth > 0; depth--) {
+      if ($match.node(depth).type.name === "codeBlock") tr.setMeta("uranus-reveal-code", $match.before(depth));
+    }
+    editor.view.dispatch(tr.setSelection(TextSelection.create(editor.state.doc, range.from, range.to)).scrollIntoView());
     // At a text/decorated boundary domAtPos can return the whole code block.
     // Scroll the actual match, not its potentially very tall parent.
     const element = editor.view.dom.querySelector(".search-hit-current");

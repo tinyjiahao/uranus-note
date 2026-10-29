@@ -1,5 +1,5 @@
-import { Node, type Editor } from "@tiptap/core";
-import { NodeSelection } from "@tiptap/pm/state";
+import { Extension, Node, type Editor } from "@tiptap/core";
+import { NodeSelection, Plugin } from "@tiptap/pm/state";
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { labelAttributes, type LABEL_COLORS } from "../../../shared/label";
@@ -11,8 +11,20 @@ const palette: { key: typeof LABEL_COLORS[number]; name: string }[] = [
   { key: "amber", name: "橙色" }, { key: "rose", name: "红色" }, { key: "pink", name: "粉色" }, { key: "purple", name: "紫色" },
 ];
 
+// A selection left over from an earlier drag/click makes the browser drag that selection (a text node) instead of the chip under the pointer;
+// clearing the native selection on mousedown lets ProseMirror start a clean node drag.
+export const InlineAtomDrag = Extension.create({
+  name: "inlineAtomDrag",
+  addProseMirrorPlugins() {
+    return [new Plugin({ props: { handleDOMEvents: { mousedown: (_view, event) => {
+      if (event.button === 0 && (event.target as HTMLElement | null)?.closest?.(".label-chip, .inline-drag-handle, .note-link, .inline-file")) window.getSelection()?.removeAllRanges();
+      return false;
+    } } } })];
+  },
+});
+
 export const LabelNode = Node.create({
-  name: "label", group: "inline", inline: true, atom: true, marks: "",
+  name: "label", group: "inline", inline: true, atom: true, draggable: true, marks: "",
   addAttributes: () => ({ text: { default: "" }, color: { default: "gray" } }),
   parseHTML: () => [{ tag: 'span[data-uranus-label="1"]', getAttrs: element => {
     const result = labelAttributes.safeParse({ text: element.getAttribute("data-text"), color: element.getAttribute("data-color") });

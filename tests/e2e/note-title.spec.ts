@@ -44,9 +44,9 @@ test("top title is editable without duplication and saves with body, including n
   await expect(body).toContainText("正文追加");
   await expect(body).toContainText("原有正文");
   await expect(body.locator("table")).toHaveCount(1);
-  await page.getByRole("button", { name: "只读模式", exact: true }).click();
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click();
   await expect(title).toHaveAttribute("readonly", "");
-  await page.getByRole("button", { name: "退出只读", exact: true }).click();
+  await page.getByRole("button", { name: "切换到编辑模式", exact: true }).click();
   await title.fill("切换前的标题");
   const previous = page.url();
   await page.getByRole("button", { name: "新建笔记", exact: true }).click();

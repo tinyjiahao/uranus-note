@@ -1,6 +1,6 @@
 import { supportsSchema } from "../../shared/schemaVersion";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { History, ChevronLeft, FilePlus2, Folder, FolderPlus, LayoutPanelLeft, List, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pin, Search, Settings as SettingsIcon, Star, Sun, Trash2 } from "lucide-react";
+import { History, ChevronDown, ChevronLeft, FilePlus2, FileUp, Folder, FolderPlus, LayoutPanelLeft, List, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pin, Search, Settings as SettingsIcon, Star, Sun, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import type { NoteDetail, NoteListItem } from "../../shared/dto";
@@ -8,6 +8,8 @@ import { SaveSignals } from "../state/saveSignals";
 import { SaveFeedback } from "../components/SaveFeedback";
 import { toMarkdown, safeFileName } from "../../shared/markdownExport";
 import { ExportPopup } from "../components/ExportPopup";
+import { NoteInfo } from "../components/NoteInfo";
+import { FolderDialog, type FolderDialogState } from "../components/FolderDialog";
 import { AccountSwitcher } from "../components/AccountSwitcher";
 import { getSession, login, switchAccount } from "../api/client";
 import { Popup, closePopups, pointAnchor, type PopupAnchor } from "../components/Popup";
@@ -37,9 +39,12 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
   const [accountMenu, setAccountMenu] = useState<PopupAnchor | null>(null);
   const [switching, setSwitching] = useState(false);
   const [exportNote, setExportNote] = useState<{ noteId: number; folderId: number; anchor: PopupAnchor } | null>(null);
+  const [infoNote, setInfoNote] = useState<{ note: NoteListItem; anchor: PopupAnchor } | null>(null);
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
   const [moveMenu, setMoveMenu] = useState(false);
   const [menuBusy, setMenuBusy] = useState(false);
   const undoReturnId = useRef<number | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   const [deletedNote, setDeletedNote] = useState<NoteDetail>();
   const [notice, setNotice] = useState("");
   const [jobId, setJobId] = useState<string>();
@@ -58,6 +63,7 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
   const [draftCandidate, setDraftCandidate] = useState<Draft>();
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [titleHost, setTitleHost] = useState<HTMLDivElement | null>(null);
+  const [modeHost, setModeHost] = useState<HTMLSpanElement | null>(null);
   const [conflictLatest, setConflictLatest] = useState<NoteDetail>();
   const queues = useRef(new Map<number, NoteSaveQueue>());
   const [locked, setLocked] = useState(false);
@@ -240,9 +246,14 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     finally { setMenuBusy(false); }
   };
   if (locked) return <main className="center-message"><p>{switching ? "正在切换账号；确认账号前暂停编辑。" : "界面已锁定；仅在服务器确认后完成退出。"}</p><p role="alert">{logoutError}</p>{switching ? logoutError && <button onClick={() => void confirmSwitchedAccount()}>重新确认账号</button> : <button onClick={() => void exitAccount()}>重试退出</button>}</main>;
+  const importMarkdownFile = async (file: File) => {
+    try { const note = await importMarkdown(await file.text(), scope.kind === "folder" ? scope.folderId : undefined); await queryClient.invalidateQueries(); navigate(`/notes/${note.id}`); }
+    catch (error) { alert((error as Error).message); }
+  };
   const closeAppActions = () => { setNoteMenu(null); setAppMenu(null); };
   const appActions = <div className="workspace-menu-actions">
     <button title="设置" onClick={() => { closeAppActions(); setSettingsOpen(true); }}><SettingsIcon />设置</button>
+    <button className="mobile-only-action" title="导入 Markdown" onClick={() => { closeAppActions(); importInput.current?.click(); }}><FileUp />导入 Markdown</button>
     <button title="切换账号" onClick={() => {
       const anchor = document.querySelector<HTMLElement>(".note-more, .workspace-more");
       closeAppActions(); if (anchor) setAccountMenu(anchor);
@@ -251,30 +262,22 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     <button title="退出" onClick={() => { closeAppActions(); void exitAccount(); }}><LogOut />退出</button>
   </div>;
   return <main className={`workspace layout-${layout}`}>
+    <input ref={importInput} type="file" accept=".md,text/markdown,text/plain" hidden aria-hidden="true" tabIndex={-1} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importMarkdownFile(file); }} />
     {layout === "three" && <aside className="sidebar">
       <div className="brand"><img src="/icon.svg" alt="" /><strong>Uranus</strong></div>
       <nav aria-label="笔记范围">
         <ScopeButton active={scope.kind === "all"} icon={<List />} label="全部笔记" onClick={() => chooseScope({ kind: "all" })} />
         <ScopeButton active={scope.kind === "starred"} icon={<Star />} label="已加星标" onClick={() => chooseScope({ kind: "starred" })} />
         <ScopeButton active={scope.kind === "trash"} icon={<Trash2 />} label="最近删除" onClick={() => chooseScope({ kind: "trash" })} />
-        <div className="nav-heading"><span>文件夹</span><button aria-label="新建文件夹" onClick={async () => { const name = prompt("文件夹名称"); if (name?.trim()) { await createFolder(name.trim()); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "folders"] }); } }}><FolderPlus /></button></div>
-        {folders.data?.map((folder) => <div className="folder-row" key={folder.id}><ScopeButton active={scope.kind === "folder" && scope.folderId === folder.id} icon={<Folder />} label={`${folder.name} (${folder.noteCount})`} onClick={() => chooseScope({ kind: "folder", folderId: folder.id })} /><button className="folder-menu" aria-label={`管理 ${folder.name}`} onClick={async () => {
-          const action = prompt(`管理“${folder.name}”：输入新名称以重命名，输入 DELETE 删除${folder.systemKey === "default" ? "（默认文件夹不可删除）" : ""}`);
-          if (!action) return;
-          try {
-            if (action === "DELETE") { if (folder.systemKey === "default") return alert("默认文件夹不可删除"); if (confirm(`删除“${folder.name}”并将其中笔记移到回收站？`)) await deleteFolder(folder.id); }
-            else await renameFolder(folder.id, action.trim());
-            if (scope.folderId === folder.id && action === "DELETE") setScope({ kind: "trash" });
-            await queryClient.invalidateQueries();
-          } catch (error) { alert((error as Error).message); }
-        }}><MoreHorizontal /></button></div>)}
+        <div className="nav-heading"><span>文件夹</span><button aria-label="新建文件夹" onClick={() => setFolderDialog({ kind: "create" })}><FolderPlus /></button></div>
+        {folders.data?.map((folder) => <div className="folder-row" key={folder.id}><ScopeButton active={scope.kind === "folder" && scope.folderId === folder.id} icon={<Folder />} label={`${folder.name} (${folder.noteCount})`} onClick={() => chooseScope({ kind: "folder", folderId: folder.id })} /><button className="folder-menu" aria-label={`管理 ${folder.name}`} aria-haspopup="dialog" onClick={() => setFolderDialog({ kind: "manage", folder })}><MoreHorizontal /></button></div>)}
       </nav>
     </aside>}
 
     {layout !== "focus" && <section className="note-list-panel">
       <div className="mobile-notebook-bar">
         <Folder aria-hidden="true" />
-        <select aria-label="选择笔记本" value={scope.kind === "folder" ? `folder:${scope.folderId}` : scope.kind} onChange={event => {
+        <div className="mobile-select"><select aria-label="选择笔记本" value={scope.kind === "folder" ? `folder:${scope.folderId}` : scope.kind} onChange={event => {
           const value = event.target.value;
           if (value.startsWith("folder:")) chooseScope({ kind: "folder", folderId: Number(value.slice(7)) });
           else if (value === "all" || value === "starred" || value === "trash") chooseScope({ kind: value });
@@ -284,14 +287,14 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           <option value="starred">已加星标</option>
           <option value="trash">最近删除</option>
           {folders.data?.map(folder => <option key={folder.id} value={`folder:${folder.id}`}>{folder.name} ({folder.noteCount})</option>)}
-        </select>
+        </select><ChevronDown aria-hidden="true" /></div>
       </div>
       {folders.error && <div className="mobile-notebook-error" role="alert">笔记本加载失败 <button onClick={() => void folders.refetch()}>重试</button></div>}
       <header className="list-header">
         {layout === "two" && <button aria-label="展开侧栏" onClick={() => setLayout("three")}><ChevronLeft /></button>}
         <div className="search-box"><Search /><input id="global-search" aria-label="搜索标题和正文" placeholder="搜索标题和正文" value={search} onChange={(event) => setSearch(event.target.value)} />{search && <button aria-label="清空搜索" onClick={() => setSearch("")}>×</button>}</div>
         {scope.kind === "trash" && <button title="清空回收站" onClick={async () => { try { const all = await listNotes({ deleted: true }); if (confirm(`永久删除最近删除中的全部 ${all.totalCount ?? all.items.length} 篇笔记及历史附件？无法恢复，不限于当前搜索结果。`)) { const task = await emptyTrash(); setJobId(task.job_id); setNotice("清空回收站已入队，正在处理中"); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"] }); } } catch (error) { setNotice(`清空失败：${(error as Error).message}`); } }}><Trash2 /></button>}
-        <label className="import-button" title="导入 Markdown"><input type="file" accept=".md,text/markdown,text/plain" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; try { const note = await importMarkdown(await file.text(), scope.kind === "folder" ? scope.folderId : undefined); await queryClient.invalidateQueries(); navigate(`/notes/${note.id}`); } catch (error) { alert((error as Error).message); } }} />导入 Markdown</label>
+        <label className="import-button" title="导入 Markdown"><input type="file" accept=".md,text/markdown,text/plain" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importMarkdownFile(file); }} />导入 Markdown</label>
         <button className="icon-primary" aria-label="新建笔记" title="新建笔记 (⌘N)" onClick={() => createMutation.mutate()}><FilePlus2 /></button>
       </header>
       <div className="list-options"><SortControls /></div>
@@ -318,6 +321,7 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           {layout !== "three" && <button aria-label="三栏视图" onClick={() => setLayout("three")}><LayoutPanelLeft /></button>}
           {layout === "three" && <button aria-label="收起侧栏" onClick={() => setLayout("two")}><PanelLeftClose /></button>}
           <div className="note-identity"><div ref={setTitleHost} className="note-title-host" /><SaveFeedback signals={saveSignals} id={selectedNote.id} /></div>
+          <span ref={setModeHost} className="mode-host" />
           <button className={selectedNote.pinned ? "active" : ""} title="置顶" onClick={() => queueFor(selectedNote).enqueue({ pinned: !selectedNote.pinned }, 0)}><Pin /></button>
           <button className={selectedNote.starred ? "active" : ""} title="星标" aria-pressed={selectedNote.starred} onClick={() => queueFor(selectedNote).enqueue({ starred: !selectedNote.starred }, 0)}><Star fill={selectedNote.starred ? "currentColor" : "none"} /></button>
           {!selectedNote.deletedAt && <select className="folder-select" aria-label="移动到文件夹" value={selectedNote.folderId} onChange={(event) => queueFor(selectedNote).enqueue({ folder_id: Number(event.target.value) }, 0)}>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
@@ -341,7 +345,7 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           const copy = await createNoteWithContent(selectedNote.folderId, content as Record<string, unknown>);
           queue.resolveWithServer(conflictLatest.revision); queryClient.setQueryData(["user", user.id, "note", selectedNote.id], conflictLatest); setConflictLatest(undefined); await queryClient.invalidateQueries(); navigate(`/notes/${copy.id}`);
         }}>复制本机内容</button></div>}
-        <NoteEditor key={`${selectedNote.id}-${editorEpoch}`} note={selectedNote} titleHost={titleHost} readOnlyBecauseDeleted={selectedNote.deletedAt !== null} onUploadState={uploading => saveSignals.update(selectedNote.id, { uploading })} onChange={(content) => queueFor(selectedNote).enqueue({ content: content as Record<string, unknown> })} onFlush={() => queueFor(selectedNote).flush()} onPersistLocal={() => queueFor(selectedNote).persistLocal()} />
+        <NoteEditor key={`${selectedNote.id}-${editorEpoch}`} note={selectedNote} titleHost={titleHost} modeHost={modeHost} readOnlyBecauseDeleted={selectedNote.deletedAt !== null} onUploadState={uploading => saveSignals.update(selectedNote.id, { uploading })} onChange={(content) => queueFor(selectedNote).enqueue({ content: content as Record<string, unknown> })} onFlush={() => queueFor(selectedNote).flush()} onPersistLocal={() => queueFor(selectedNote).persistLocal()} />
         {versionsOpen && <VersionPanel userId={user.id} note={selectedNote} beforeAction={async () => { const queue = queueFor(selectedNote); await queue.flush(); if (queue.hasUnsaved()) throw new Error("请先解决正文保存问题"); }} onClose={() => setVersionsOpen(false)} onRestored={async (restored) => { queues.current.delete(restored.id); queryClient.setQueryData(["user", user.id, "note", restored.id], restored); setEditorEpoch(value => value + 1); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"] }); setVersionsOpen(false); }} />}
       </> : selected.error ? <div className="empty-editor"><h2>笔记不存在或无权访问</h2></div> : null}
     </section>
@@ -350,12 +354,17 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     {appMenu && <Popup anchor={appMenu} title="更多" close={() => setAppMenu(null)}>{appActions}</Popup>}
     {settingsOpen && <Settings user={user} beforeSensitiveChange={beforeSensitiveChange} onClose={() => setSettingsOpen(false)} />}
     {accountMenu && <AccountSwitcher anchor={accountMenu} close={() => setAccountMenu(null)} change={changeAccount} />}
+    {folderDialog && <FolderDialog state={folderDialog} onClose={() => setFolderDialog(null)}
+      onSave={async name => { if (folderDialog.kind === "create") await createFolder(name); else await renameFolder(folderDialog.folder.id, name); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "folders"] }); }}
+      onDelete={async folder => { await deleteFolder(folder.id); if (scope.folderId === folder.id) setScope({ kind: "trash" }); await queryClient.invalidateQueries(); }} />}
+    {infoNote && <NoteInfo userId={user.id} note={infoNote.note} folder={folders.data?.find(folder => folder.id === infoNote.note.folderId)} localContent={() => queues.current.get(infoNote.note.id)?.localContent()} anchor={infoNote.anchor} close={() => setInfoNote(null)} />}
     {exportNote && <ExportPopup {...exportNote} localContent={id => queues.current.get(id)?.localContent()} close={() => setExportNote(null)} />}
     {noteMenu && <Popup anchor={noteMenu.anchor} title={noteMenu.note.title || "未命名笔记"} close={() => setNoteMenu(null)} back={moveMenu ? () => setMoveMenu(false) : undefined}>
-      {noteMenu.note.deletedAt ? <><button disabled={menuBusy} onClick={() => void manageNote("restore")}>恢复笔记</button><hr /><button className="danger" disabled={menuBusy} onClick={() => void manageNote("permanent")}>永久删除…</button></> : moveMenu ? folders.data?.map(folder => <button key={folder.id} disabled={menuBusy} aria-pressed={folder.id === noteMenu.note.folderId} onClick={() => void manageNote({ folder_id: folder.id })}>{folder.name}</button>) : <>
+      {noteMenu.note.deletedAt ? <><button onClick={() => { setInfoNote({ note: noteMenu.note, anchor: noteMenu.anchor }); setNoteMenu(null); }}>笔记信息</button><button disabled={menuBusy} onClick={() => void manageNote("restore")}>恢复笔记</button><hr /><button className="danger" disabled={menuBusy} onClick={() => void manageNote("permanent")}>永久删除…</button></> : moveMenu ? folders.data?.map(folder => <button key={folder.id} disabled={menuBusy} aria-pressed={folder.id === noteMenu.note.folderId} onClick={() => void manageNote({ folder_id: folder.id })}>{folder.name}</button>) : <>
         <button disabled={menuBusy} onClick={() => void manageNote({ pinned: !noteMenu.note.pinned })}>{noteMenu.note.pinned ? "取消置顶" : "置顶"}</button>
         <button disabled={menuBusy} onClick={() => void manageNote({ starred: !noteMenu.note.starred })}>{noteMenu.note.starred ? "取消星标" : "加星标"}</button>
         <button aria-haspopup="true" disabled={menuBusy} onClick={() => setMoveMenu(true)}>移动到文件夹 ›</button>
+        <button onClick={() => { setInfoNote({ note: noteMenu.note, anchor: noteMenu.anchor }); setNoteMenu(null); }}>笔记信息</button>
         {selectedId === noteMenu.note.id && <button onClick={() => { setVersionsOpen(true); setNoteMenu(null); }}>版本历史</button>}
         <button onClick={async () => {
           try {

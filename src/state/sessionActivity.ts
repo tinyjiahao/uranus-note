@@ -26,8 +26,8 @@ export function afterActiveRequest(userId: string, renew: () => Promise<number>)
   if (pending || now < nextAttempt || !lastInteraction || now - lastInteraction > 60_000 || document.visibilityState !== "visible") return;
   lastInteraction = 0;
   nextAttempt = now + 60_000;
-  pending = renew().then(expiresAt => {
-    if (owner === userId) nextAttempt = Math.max(Date.now() + 60_000, expiresAt - 23 * 60 * 60 * 1000);
+  pending = renew().then(() => {
+    if (owner === userId) nextAttempt = Date.now() + 60 * 60 * 1000;
   }).catch(() => { /* Transient renewal failure is not a failed note save. */ }).finally(() => { pending = undefined; });
 }
 

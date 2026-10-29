@@ -1,5 +1,5 @@
 import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
-import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, PageDto } from "../../shared/dto";
+import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, NoteStatsDto, PageDto } from "../../shared/dto";
 import type { AccountIdentity } from "../../shared/account";
 import { activateIdentity, identity, identityMatches, lockIdentity, notifyAccountChange, trackRequest } from "../state/identity";
 import { afterActiveRequest, waitForSessionActivity } from "../state/sessionActivity";
@@ -98,6 +98,7 @@ export const emptyTrash = () => request<{ job_id: string; status: string }>("/ap
 export const getMaintenanceJob = (id: string) => request<{ id: string; status: string }>(`/api/maintenance/jobs/${encodeURIComponent(id)}`);
 export const retryMaintenanceJob = (id: string) => request(`/api/maintenance/jobs/${encodeURIComponent(id)}/retry`, { method: "POST", body: JSON.stringify({ operation_id: uuidv7() }) });
 export const importMarkdown = (markdown: string, folderId?: number) => request<NoteDetail>("/api/import/markdown", { method: "POST", body: JSON.stringify({ operation_id: uuidv7(), markdown, ...(folderId ? { folder_id: folderId } : {}) }) });
+export const getNoteStats = (id: number) => request<NoteStatsDto>(`/api/notes/${id}/stats`);
 export const listVersions = (id: number) => request<PageDto<Record<string, unknown>>>(`/api/notes/${id}/versions?page=1&pageSize=30`);
 export const getVersion = (id: number, versionId: number) => request<Record<string, unknown>>(`/api/notes/${id}/versions/${versionId}`);
 export const createVersion = (id: number) => request<Record<string, unknown>>(`/api/notes/${id}/versions`, { method: "POST", body: JSON.stringify({ operation_id: uuidv7() }) });

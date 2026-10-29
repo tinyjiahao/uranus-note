@@ -26,7 +26,7 @@ it("renews only active valid sessions, throttles writes, and protects the endpoi
   const response = await call("/api/session/activity", "POST", cookie, csrfToken);
   expect(response.status).toBe(200);
   const renewed = await response.json<{ expiresAt: number }>();
-  expect(renewed.expiresAt).toBeGreaterThan(Date.now() + 23.9 * 3600_000);
+  expect(renewed.expiresAt).toBeGreaterThan(Date.now() + 6.99 * 24 * 3600_000);
   expect(response.headers.get("set-cookie")).toContain("uranus_accounts=");
   expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   expect((await readAccountSession(env.DB, env.SESSION_SECRET, other.token))!.expiresAt).toBe(other.expiresAt);

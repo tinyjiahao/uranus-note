@@ -4,7 +4,7 @@ import { accountApp } from "../../worker/accountApp";
 import { initializeDefaultAccount } from "../../worker/services/initializeAccount";
 
 const origin = "http://uranus.test", password = "switch-test-password";
-const bindings = { ...env, REGISTRATION_ENABLED: "true", SESSION_TTL_SECONDS: "86400", LOGIN_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+const bindings = { ...env, REGISTRATION_ENABLED: "true", SESSION_TTL_SECONDS: "604800", LOGIN_RATE_LIMITER: { limit: async () => ({ success: true }) } };
 type Session = { user: { id: string; email: string }; csrfToken: string; expiresAt: number };
 type Accounts = { accounts: { user: { id: string }; expiresAt: number; current: boolean }[]; switchToken: string };
 function browser() {
@@ -46,7 +46,7 @@ it("remembers signed sessions, switches without renewing, and logs out all remem
   const list = await (await client.request("/api/account/sessions")).json<Accounts>();
   expect(list.accounts).toHaveLength(2);
   expect(JSON.stringify(list)).not.toContain(tokenA);
-  expect(a.expiresAt - Date.now()).toBeGreaterThan(86_000_000);
+  expect(a.expiresAt - Date.now()).toBeGreaterThan(600_000_000);
   expect((await client.request("/api/account/switch", "POST", { userId: a.user.id })).status).toBe(403);
   expect((await client.request("/api/account/switch", "POST", { userId: "foreign" }, { "X-Account-Switch-Token": list.switchToken })).status).toBe(404);
   expect((await client.request("/api/account/switch", "POST", { userId: a.user.id }, { Origin: "https://foreign.test", "X-Account-Switch-Token": list.switchToken })).status).toBe(403);

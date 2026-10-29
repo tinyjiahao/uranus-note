@@ -16,13 +16,14 @@ export function nodeText(node: ContentNode): string {
   if (node.type === "hardBreak") return "\n";
   if (node.type === "label") return `[${String(node.attrs?.text ?? "")}]`;
   if (node.type === "noteLink") return `[[${String(node.attrs?.title ?? "") }]]`;
-  if (node.type === "fileAttachment") return String(node.attrs?.fileName ?? "");
+  if (node.type === "fileAttachment" || node.type === "inlineFile") return String(node.attrs?.fileName ?? "");
+  if (node.type === "inlineImage") return "";
   return (node.content ?? []).map(nodeText).join(["paragraph", "heading"].includes(node.type ?? "") ? "" : "\n");
 }
 export function attachmentFiles(doc: ContentNode) {
   const files = new Map<string, string>();
   const visit = (node: ContentNode) => {
-    if (["image", "fileAttachment"].includes(node.type ?? "") && typeof node.attrs?.attachmentId === "string") {
+    if (["image", "inlineImage", "fileAttachment", "inlineFile"].includes(node.type ?? "") && typeof node.attrs?.attachmentId === "string") {
       const id = node.attrs.attachmentId;
       const name = safeFileName(String(node.attrs.fileName ?? node.attrs.alt ?? "image"), "attachment");
       const dot = name.lastIndexOf(".");
@@ -38,6 +39,8 @@ export function toMarkdown(doc: ContentNode) {
   const inline = (node: ContentNode): string => {
     if (node.type === "hardBreak") return "  \n";
     if (node.type === "label" || node.type === "noteLink") return nodeText(node);
+    if (node.type === "inlineImage") return block({ ...node, type: "image" });
+    if (node.type === "inlineFile") return block({ ...node, type: "fileAttachment" });
     let value = escape(node.text ?? "");
     if (node.marks?.some(mark => mark.type === "code")) {
       const raw = node.text ?? "", fence = "`".repeat(Math.max(0, ...[...raw.matchAll(/`+/g)].map(m => m[0].length)) + 1);
@@ -71,6 +74,8 @@ export function toMarkdown(doc: ContentNode) {
       case "table": {
         const cellText = (cell: ContentNode): string => {
           if (cell.type === "fileAttachment") return block(cell);
+          if (cell.type === "inlineImage") return block({ ...cell, type: "image" });
+          if (cell.type === "inlineFile") return block({ ...cell, type: "fileAttachment" });
           if (!cell.content) return nodeText(cell);
           return cell.content.map(cellText).join(["paragraph", "heading"].includes(cell.type ?? "") ? "" : "\n");
         };

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { validateAndDeriveContent } from "../../shared/content";
 import type { ContentNode } from "../../shared/dto";
 import { attachmentFiles, safeFileName, toMarkdown } from "../../shared/markdownExport";
-import { isMagicValid } from "../../shared/files";
+import { isMagicValid, isPreviewable } from "../../shared/files";
 import { crc32, StoreZip } from "../../shared/zip";
 import { splitNoteTitle } from "../../src/components/editor/noteTitle";
 import { LABEL_COLORS, labelAttributes } from "../../shared/label";
@@ -53,7 +53,7 @@ it("exports nodes and marks with explicit safe Markdown degradation", () => {
   expect(safeFileName("CON", "empty")).toBe("_CON");
 });
 it("checks full file bytes including invalid UTF-8 and NUL after the signature window", () => {
-  for (const mime of ["text/plain", "text/markdown", "text/csv"]) {
+  for (const mime of ["text/plain", "text/markdown", "text/csv", "application/json", "application/yaml"]) {
     expect(isMagicValid(mime, new TextEncoder().encode("中文\nhello"))).toBe(true);
     expect(isMagicValid(mime, new TextEncoder().encode("a".repeat(100) + "\0"))).toBe(false);
     expect(isMagicValid(mime, new Uint8Array([0xc3, 0x28]))).toBe(false);
@@ -73,4 +73,9 @@ it("writes valid store-only ZIP headers, CRC, UTF-8 paths and rejects traversal/
   const central = view.getUint32(end + 16, true); expect(view.getUint32(central, true)).toBe(0x02014b50);
   expect(() => zip.add("../bad", data)).toThrow(); expect(() => zip.add("笔记.md", data)).toThrow();
   expect(() => zip.add("large", new Uint8Array(100_000_000))).toThrow();
+});
+
+it("previews only text, markdown, csv, json, yaml and pdf attachments", () => {
+  for (const mime of ["text/plain", "text/markdown", "text/csv", "application/json", "application/yaml", "application/pdf"]) expect(isPreviewable(mime)).toBe(true);
+  for (const mime of ["application/zip", "image/png", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]) expect(isPreviewable(mime)).toBe(false);
 });

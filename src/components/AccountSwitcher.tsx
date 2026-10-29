@@ -30,7 +30,7 @@ export function AccountSwitcher({ anchor, close, change }: { anchor: PopupAnchor
     <header><h2 id="account-switcher-title">切换账号</h2><button type="button" aria-label="关闭切换账号" disabled={busy} onClick={close}>关闭</button></header>
     <section aria-labelledby="remembered-accounts-title">
     <h3 id="remembered-accounts-title">已登录账号 <span className="account-count">{accounts.data?.accounts.length ?? 0}/5</span></h3>
-    <p className="account-switcher-hint">24 小时内免密切换，切换不会延长有效期。</p>
+    <p className="account-switcher-hint">7 天内免密切换，切换不会延长有效期。</p>
     {accounts.isPending && <p role="status">正在读取账号…</p>}
     {accounts.error && <p role="alert">{accounts.error.message}<button onClick={() => void accounts.refetch()}>重试</button></p>}
     {accounts.data?.accounts.length === 0 && <p className="account-empty">暂无有效的已登录账号，请在下方登录。</p>}

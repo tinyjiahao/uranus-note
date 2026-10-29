@@ -14,7 +14,7 @@ test("image upload uses multipart and remains visible after saving and reloading
   const uploaded = await response;
   expect(uploaded.request().headers()["content-type"]).toMatch(/^multipart\/form-data; boundary=/);
   expect(uploaded.status()).toBe(201);
-  const picture = page.locator(".prose-editor img");
+  const picture = page.locator(".prose-editor img[data-attachment-id]");
   await expect(picture).toBeVisible();
   await expect.poll(() => picture.evaluate(el => (el as HTMLImageElement).naturalWidth)).toBe(1);
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible();
@@ -33,9 +33,9 @@ test("upload failure exposes retry without inserting a broken image", async ({ p
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
   });
   await expect(page.getByRole("button", { name: "重试上传" })).toBeVisible();
-  await expect(page.locator(".prose-editor img")).toHaveCount(0);
+  await expect(page.locator(".prose-editor img[data-attachment-id]")).toHaveCount(0);
   await page.unroute("**/api/attachments"); await page.getByRole("button", { name: "重试上传" }).click();
-  await expect(page.locator(".prose-editor img")).toBeVisible();
+  await expect(page.locator(".prose-editor img[data-attachment-id]")).toBeVisible();
   await expect(page.getByRole("button", { name: "重试上传" })).toHaveCount(0);
   await expect(page.locator(".save-state")).toContainText("已保存到服务器");
 });
@@ -57,9 +57,9 @@ for (const target of ["body", "table cell"] as const) test(`image-only clipboard
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
   });
   expect((await upload).status()).toBe(201);
-  const picture = target === "table cell" ? editor.locator("td").first().locator("img") : editor.locator("img");
+  const picture = target === "table cell" ? editor.locator("td").first().locator("img[data-attachment-id]") : editor.locator("img[data-attachment-id]");
   await expect(picture).toBeVisible();
-  await expect(editor.locator("img")).toHaveCount(1);
+  await expect(editor.locator("img[data-attachment-id]")).toHaveCount(1);
   await expect(page.getByText(/图片粘贴未完成/)).toHaveCount(0);
   await expect(page.locator(".save-state")).toContainText("已保存到服务器");
   await page.reload();
@@ -79,16 +79,16 @@ test("clipboard files and copied private images paste without cross-note referen
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
   }, png);
   expect((await upload).status()).toBe(201);
-  await expect(editor).toContainText("粘贴文字"); await expect(editor.locator("img")).toHaveCount(1);
-  const sourceId = await editor.locator("img").getAttribute("data-attachment-id"); expect(sourceId).toBeTruthy();
+  await expect(editor).toContainText("粘贴文字"); await expect(editor.locator("img[data-attachment-id]")).toHaveCount(1);
+  const sourceId = await editor.locator("img[data-attachment-id]").getAttribute("data-attachment-id"); expect(sourceId).toBeTruthy();
 
-  await editor.click(); await page.keyboard.press("End");
+  await editor.evaluate(element => (element as HTMLElement & { editor: import("@tiptap/core").Editor }).editor.commands.focus("end"));
   await editor.evaluate((element, id) => {
     const transfer = new DataTransfer(); transfer.setData("text/html", `<img src="/api/attachments/${id}" data-attachment-id="${id}" alt="copied.png">`);
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
   }, sourceId!);
-  await expect(editor.locator("img")).toHaveCount(2);
-  expect(await editor.locator("img").nth(1).getAttribute("data-attachment-id")).toBe(sourceId);
+  await expect(editor.locator("img[data-attachment-id]")).toHaveCount(2);
+  expect(await editor.locator("img[data-attachment-id]").nth(1).getAttribute("data-attachment-id")).toBe(sourceId);
 
   await page.getByRole("button", { name: "新建笔记", exact: true }).click(); await expect(editor).toHaveText(""); await editor.click();
   const copied = page.waitForResponse(response => response.url().includes(`/api/attachments/${sourceId}/copy`) && response.request().method() === "POST");
@@ -96,7 +96,7 @@ test("clipboard files and copied private images paste without cross-note referen
     const transfer = new DataTransfer(); transfer.setData("text/html", `<img src="/api/attachments/${id}" data-attachment-id="${id}" alt="copied.png">`);
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
   }, sourceId!);
-  expect((await copied).status()).toBe(201); await expect(editor.locator("img")).toHaveCount(1);
-  expect(await editor.locator("img").getAttribute("data-attachment-id")).not.toBe(sourceId);
+  expect((await copied).status()).toBe(201); await expect(editor.locator("img[data-attachment-id]")).toHaveCount(1);
+  expect(await editor.locator("img[data-attachment-id]").getAttribute("data-attachment-id")).not.toBe(sourceId);
   await expect(page.locator(".save-state")).toContainText("已保存到服务器");
 });

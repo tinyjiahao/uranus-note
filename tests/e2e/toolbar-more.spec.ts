@@ -19,7 +19,7 @@ test('grouped toolbar preserves selection, nested popup and keyboard access', as
   await expect(toolbar.getByRole('button', { name: '删除线', exact: true })).toHaveCount(0);
   await trigger.click();
   const menu = page.getByRole('dialog', { name: '更多格式与插入', exact: true });
-  await expect(menu.getByRole('button', { name: '复制代码', exact: true })).toBeDisabled();
+  await expect(menu.getByRole('button', { name: '复制代码', exact: true })).toHaveCount(0);
   await menu.getByRole('button', { name: '删除线', exact: true }).click();
   await expect(body.locator('s')).toHaveText('选择文字');
   await expect(menu).toHaveCount(0);

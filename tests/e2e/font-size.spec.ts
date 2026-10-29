@@ -21,7 +21,7 @@ test("editor font size is a persistent local preference, not a content edit", as
   await expect(editor).toHaveText("字号显示测试");
   await page.reload();
   await expect(editor).toHaveCSS("font-size", "18px");
-  await page.getByRole("button", { name: "只读模式", exact: true }).click();
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click();
   await openWorkspaceMenu(page); await settings.click(); await page.getByLabel("编辑器字号").selectOption("20");
   await expect(editor).toHaveCSS("font-size", "20px");
   page.once("dialog", dialog => dialog.accept());

@@ -14,12 +14,12 @@ function NoteLinkView({ node }: NodeViewProps) {
   const navigate = useNavigate(), id = Number(node.attrs.noteId);
   const target = useQuery({ queryKey: ["user", identity().userId, "note", id], queryFn: ({ signal }) => getNote(id, signal), retry: false, staleTime: 30_000 });
   const missing = target.isError || Boolean(target.data?.deletedAt);
-  return <NodeViewWrapper as="span" contentEditable={false} className={`note-link${missing ? " note-link-missing" : ""}`}>
+  return <NodeViewWrapper as="span" contentEditable={false} data-drag-handle="" className={`note-link${missing ? " note-link-missing" : ""}`}>
     <a data-note-link href={`/notes/${id}`} title={missing ? "目标笔记不可用" : "打开笔记"} aria-disabled={missing} onClick={event => { event.preventDefault(); if (!missing) navigate(`/notes/${id}`); }}>{target.data && !missing ? target.data.title || "未命名笔记" : String(node.attrs.title || "未命名笔记")}{missing && "（不可用）"}</a>
   </NodeViewWrapper>;
 }
 export const NoteLinkNode = Node.create({
-  name: "noteLink", group: "inline", inline: true, atom: true, marks: "",
+  name: "noteLink", group: "inline", inline: true, atom: true, draggable: true, marks: "",
   addAttributes: () => ({ noteId: { default: 0 }, title: { default: "" } }),
   parseHTML: () => [{ tag: 'span[data-note-link="1"]', getAttrs: element => {
     const parsed = noteLinkAttributes.safeParse({ noteId: Number(element.getAttribute("data-id")), title: element.getAttribute("data-title") });

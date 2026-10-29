@@ -10,13 +10,18 @@ async function open(page: Page) {
   await expect(page.locator(".prose-editor")).toBeVisible();
 }
 
+// The indent items keep the "more" menu open, so only open it when it is closed.
+async function openMore(page: Page) {
+  if (!(await page.getByRole("dialog", { name: "更多格式与插入", exact: true }).count())) await page.getByRole("button", { name: "更多格式与插入", exact: true }).click();
+}
+
 for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTable of [false, true]) test(`indent toolbar ${kind} ${inTable ? "cell" : "body"}`, async ({ page }) => {
   await open(page);
   const editor = page.locator(".prose-editor");
   const increase = page.getByRole("button", { name: "增加缩进", exact: true });
   const decrease = page.getByRole("button", { name: "减少缩进", exact: true });
   await editor.click();
-  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await expect(increase).toBeDisabled();
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await expect(increase).toBeEnabled();
   await expect(decrease).toBeDisabled(); await page.keyboard.press("Escape");
   if (inTable) {
     await page.getByRole("button", { name: "表格", exact: true }).click();
@@ -29,12 +34,12 @@ for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTabl
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await expect(increase).toBeDisabled(); await page.keyboard.press("Escape"); await editor.focus();
   await page.keyboard.press("Enter");
   await page.keyboard.insertText("第二项");
-  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await increase.click();
+  await openMore(page); await increase.click();
   await expect(scope.locator("li li p")).toHaveText("第二项");
-  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await decrease.click();
+  await openMore(page); await decrease.click();
   await expect(scope.locator("li li")).toHaveCount(0);
   await expect(scope.locator("li")).toHaveCount(2);
-  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await increase.click();
+  await openMore(page); await increase.click();
   await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(scope.locator("li li")).toHaveCount(0);
   await page.getByRole("button", { name: "重做", exact: true }).click();
@@ -44,7 +49,7 @@ for (const kind of ["无序列表", "有序列表", "待办"]) for (const inTabl
   await page.reload();
   await expect(scope.locator("li li p")).toHaveText("第二项");
   await scope.locator("li li p").click();
-  await page.getByRole("button", { name: "只读模式", exact: true }).click();
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click();
   await expect(page.getByRole("button", { name: "更多格式与插入", exact: true })).toBeDisabled();
 });
 
@@ -58,7 +63,7 @@ test("ordered list markers cycle by indentation depth", async ({ page }) => {
   for (const text of ["二级", "三级", "四级"]) {
     await page.keyboard.press("Enter");
     await page.keyboard.insertText(text);
-    await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await increase.click();
+    await openMore(page); await increase.click();
   }
 
   await expect(editor.locator("ol")).toHaveCount(4);
@@ -99,7 +104,10 @@ test("search arrows relocate a single match inside a long code block", async ({ 
   const editor = page.locator(".prose-editor");
   await editor.click();
   await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "代码块", exact: true }).click();
-  await page.keyboard.insertText(["唯一搜索目标", ...Array.from({ length: 150 }, (_, i) => `内容行 ${i}`)].join("\n"));
+  await editor.evaluate((el, text) => {
+    const instance = (el as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+    instance.commands.setContent({ type: "doc", content: [{ type: "codeBlock", content: [{ type: "text", text }] }] });
+  }, ["唯一搜索目标", ...Array.from({ length: 150 }, (_, i) => `内容行 ${i}`)].join("\n"));
   await page.keyboard.press("ControlOrMeta+f");
   const input = page.getByPlaceholder("在笔记中查找");
   await input.fill("唯一搜索目标");

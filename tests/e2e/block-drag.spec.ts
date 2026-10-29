@@ -56,6 +56,6 @@ test("body blocks reorder, undo, cancel, and persist without changing their cont
   await expect(page.locator(".save-state")).toContainText("已保存到服务器");
   await page.reload();
   await expect.poll(json).toEqual(moved);
-  await page.getByRole("button", { name: "只读模式", exact: true }).click();
+  await page.getByRole("button", { name: "切换到只读模式", exact: true }).click();
   await expect(body.locator(".block-drag-handle")).toHaveCount(0);
 });

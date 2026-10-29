@@ -14,7 +14,7 @@ type SessionRow = {
   id: string; email: string; username: string;
 };
 
-export const ACTIVE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const ACTIVE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SESSION_RENEW_INTERVAL_MS = 60 * 60 * 1000;
 
 export async function renewAccountSession(db: D1Database, session: AccountSession) {
@@ -35,8 +35,8 @@ function validateSecret(secret: string) {
 /** Only called after password verification; the observed version is a CAS. */
 export async function issueAccountSession(db: D1Database, secret: string, userId: string, observedVersion: number, configuredTtl?: string) {
   validateSecret(secret);
-  const requested = Number(configuredTtl ?? 86400);
-  const ttl = Number.isSafeInteger(requested) && requested > 0 ? Math.min(requested, 2_592_000) : 86400;
+  const requested = Number(configuredTtl ?? 604800);
+  const ttl = Number.isSafeInteger(requested) && requested > 0 ? Math.min(requested, 2_592_000) : 604800;
   const credential = base64url(crypto.getRandomValues(new Uint8Array(32)));
   const digest = await sha256(credential);
   const csrf = base64url(crypto.getRandomValues(new Uint8Array(24)));

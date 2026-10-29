@@ -1,3 +1,4 @@
+import { copySelectedImage, imageToBlock, imageToInline } from "./inlineImage";
 import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { CellSelection, selectedRect } from "@tiptap/pm/tables";
@@ -79,7 +80,8 @@ export function TableTools({ editor, readOnly, showRowNumbers, onShowRowNumbers 
   useEffect(() => { if (readOnly) close(); }, [readOnly]);
   if (!target || readOnly) return null;
   const context = tableContext(editor);
-  const image = editor.state.selection instanceof NodeSelection && editor.state.selection.node.type.name === "image";
+  const imageType = editor.state.selection instanceof NodeSelection ? editor.state.selection.node.type.name : "";
+  const image = imageType === "image" || imageType === "inlineImage", inlineImage = imageType === "inlineImage";
   if (!context && !image) return null;
   const rect = context ? selectedRect(editor.state) : null;
   const rowCount = rect ? rect.bottom - rect.top : 0, colCount = rect ? rect.right - rect.left : 0;
@@ -137,7 +139,15 @@ export function TableTools({ editor, readOnly, showRowNumbers, onShowRowNumbers 
       <button onClick={() => act(() => { const widths = tableWidths(editor); setWidths(editor, widths.map(() => Math.max(64, Math.round(widths.reduce((a, b) => a + b, 0) / widths.length)))); })}>平均分配整表列宽</button>
       <button onClick={() => act(() => beforeTable(editor))}>在表格上方继续输入</button><button onClick={() => act(() => belowTable(editor))}>在表格下方继续输入</button><hr /><button className="danger" onClick={() => remove("table")}>删除表格</button>
     </>}
-    {panel === "image" && <>
+    {panel === "image" && inlineImage && <>
+      <button onClick={() => act(() => copySelectedImage(editor))}>复制图片</button>
+      <button onClick={() => act(() => imageToBlock(editor))}>转为独立图片（单独一行）</button>
+      {context && <button aria-haspopup="true" onClick={() => go("more")}>表格操作 ›</button>}
+      <hr /><button className="danger" onClick={() => act(() => editor.commands.deleteSelection())}>移除图片</button>
+    </>}
+    {panel === "image" && !inlineImage && <>
+      <button onClick={() => act(() => copySelectedImage(editor))}>复制图片</button>
+      <button onClick={() => act(() => imageToInline(editor))}>转为行内图片（可并排）</button>
       {(["left", "center", "right"] as const).map((value, i) => <button key={value} aria-pressed={editor.getAttributes("image").imageAlign === value} onClick={() => act(() => editor.commands.updateAttributes("image", { imageAlign: value }), true)}>图片{["左对齐", "居中", "右对齐"][i]}</button>)}
       <button onClick={() => act(() => editor.commands.updateAttributes("image", { imageAlign: null }), true)}>恢复默认对齐</button>
       {context && <button aria-haspopup="true" onClick={() => go("more")}>表格操作 ›</button>}

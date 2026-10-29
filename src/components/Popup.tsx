@@ -8,10 +8,14 @@ export function pointAnchor(element: HTMLElement, x: number, y: number): PopupAn
 }
 // One root popup across editor, list and settings. Subpanels stay in the same root.
 export function closePopups() { window.dispatchEvent(new Event("uranus-close-popups")); }
-export function Popup({ anchor, title, close, children, back, restoreFocus, className = "", placement = "bottom", onCopy }: {
+export function Popup({ anchor, title, close, children, back, restoreFocus, className = "", placement = "bottom", onCopy, autoFocus = true, positionAnchor }: {
   anchor: PopupAnchor; title: string; close: () => void; children: ReactNode; back?: (() => void) | undefined; restoreFocus?: (() => void) | undefined; className?: string;
   placement?: "top" | "bottom";
   onCopy?: ClipboardEventHandler<HTMLDivElement>;
+  /** Set false for popups attached to editor content so the editor keeps focus and arrow keys keep moving the caret. */
+  autoFocus?: boolean;
+  /** Element whose rectangle is used for placement while `anchor` keeps focus/outside-click semantics (e.g. the whole card instead of its inner button). */
+  positionAnchor?: HTMLElement | null;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -43,7 +47,7 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
       const x = viewport?.offsetLeft ?? 0, y = viewport?.offsetTop ?? 0;
       panel.style.setProperty("--popup-height", `${height}px`);
       panel.style.setProperty("--popup-bottom", `${Math.max(0, innerHeight - height - y)}px`);
-      let rect = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : anchor;
+      let rect = anchor instanceof HTMLElement ? (positionAnchor ?? anchor).getBoundingClientRect() : anchor;
       const targetRect = anchorElement?.getBoundingClientRect();
       if (!(anchor instanceof HTMLElement) && targetRect) {
         const dx = targetRect.left - (anchor.originLeft ?? targetRect.left), dy = targetRect.top - (anchor.originTop ?? targetRect.top);
@@ -54,7 +58,7 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
       setPosition({ left: Math.max(x + 8, Math.min(rect.left, x + width - panel.offsetWidth - 8)), top: Math.max(y + 8, Math.min(top, y + height - panel.offsetHeight - 8)) });
     };
     place();
-    (panel.querySelector<HTMLElement>("[data-initial-focus]") ?? panel.querySelector<HTMLElement>("button:not(:disabled),input,select"))?.focus({ preventScroll: true });
+    if (autoFocus) (panel.querySelector<HTMLElement>("[data-initial-focus]") ?? panel.querySelector<HTMLElement>("button:not(:disabled),input,select"))?.focus({ preventScroll: true });
     const outside = (event: PointerEvent) => { if (!panel.contains(event.target as Node) && !(anchor instanceof HTMLElement && anchor.contains(event.target as Node))) dismiss(); };
     const key = (event: KeyboardEvent) => {
       if (event.isComposing) return;
@@ -81,7 +85,7 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
     const panel = root.current;
     // A subpanel can remove the focused input/button. Keep keyboard navigation
     // inside the surviving popup instead of leaving focus on document.body.
-    if (panel && !panel.contains(document.activeElement)) {
+    if (autoFocus && panel && !panel.contains(document.activeElement) && !(className === "toolbar-more-popup" && document.activeElement?.closest(".prose-editor"))) {
       (panel.querySelector<HTMLElement>("[data-initial-focus]") ?? panel.querySelector<HTMLElement>(".object-popup-content button:not(:disabled),.object-popup-content input"))?.focus({ preventScroll: true });
     }
   });

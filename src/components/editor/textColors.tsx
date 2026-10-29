@@ -9,7 +9,7 @@ export const TextColor = Mark.create({
   name: "textColor",
   addAttributes: () => ({ color: { default: null, rendered: false } }),
   parseHTML: () => [{ style: "color", getAttrs: value => { const color = parsePaletteColor(value); return color ? { color } : false; } }],
-  renderHTML: ({ mark }) => ["span", { style: `color: ${parsePaletteColor(String(mark.attrs.color)) ?? "inherit"}` }, 0],
+  renderHTML: ({ mark }) => ["span", { "data-text-color": "", style: `color: ${parsePaletteColor(String(mark.attrs.color)) ?? "inherit"}` }, 0],
 });
 export const ColoredHighlight = Highlight.extend({
   addAttributes: () => ({ color: {
@@ -17,7 +17,7 @@ export const ColoredHighlight = Highlight.extend({
     parseHTML: element => parsePaletteColor(element.getAttribute("data-color") ?? element.style.backgroundColor, true),
     renderHTML: attrs => {
       const color = parsePaletteColor(String(attrs.color), true);
-      return color ? { "data-color": color, style: `background-color: ${color}; color: inherit` } : {};
+      return color ? { "data-color": color, style: `background-color: ${color}` } : {};
     },
   } }),
 }).configure({ multicolor: true });
