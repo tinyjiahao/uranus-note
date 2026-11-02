@@ -13,6 +13,7 @@ test("failed account login requires authoritative identity confirmation before e
   const popup = page.getByRole("dialog", { name: "切换账号", exact: true });
   for (const width of [1440, 375]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(200);
     const box = (await popup.boundingBox())!;
     expect(box.x + box.width).toBeCloseTo(width, 0);
     expect(box.y).toBe(0);

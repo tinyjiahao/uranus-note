@@ -66,6 +66,20 @@ export async function listNotes(db: D1Database, options: ListOptions, session?: 
   const result = await db.prepare(sql).bind(...bindings).all<NoteRow>();
   const rows = result.results;
   const items = rows.slice(0, pageSize).map(listItem);
+  if (items.length) {
+    // Current refs are deleted and rebuilt in validateAndDeriveContent's stable
+    // document order on every save/restore, so the smallest rowid is the first
+    // distinct image attachment in the current document (V9-02).
+    const placeholders = items.map(() => "?").join(",");
+    const thumbs = await db.prepare(`SELECT note_id, attachment_id FROM (
+      SELECT r.note_id AS note_id, r.attachment_id AS attachment_id, r.rowid AS rowid,
+        MIN(r.rowid) OVER (PARTITION BY r.note_id) AS first_rowid
+      FROM uranus_attachment_refs r JOIN uranus_attachments a ON a.id = r.attachment_id
+      WHERE r.version_id IS NULL AND a.status = 'ready' AND a.mime LIKE 'image/%' AND r.note_id IN (${placeholders})
+    ) WHERE rowid = first_rowid`).bind(...items.map(item => item.id)).all<{ note_id: number; attachment_id: string }>();
+    const byId = new Map(thumbs.results.map(row => [row.note_id, row.attachment_id]));
+    for (const item of items) { const thumb = byId.get(item.id); if (thumb) item.thumbnailAttachmentId = thumb; }
+  }
   if (options.q?.trim() && items.length) {
     const query = validateSearchQuery(options.q);
     // Only the returned page is inspected. Never transfer full normalized body to

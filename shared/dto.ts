@@ -19,6 +19,8 @@ export type NoteListItem = {
   deletedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  /** First image attachment in document order, when the note has one (V9-02). */
+  thumbnailAttachmentId?: string;
 };
 
 export type NoteDetail = NoteListItem & {

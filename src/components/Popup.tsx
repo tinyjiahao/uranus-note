@@ -8,8 +8,10 @@ export function pointAnchor(element: HTMLElement, x: number, y: number): PopupAn
 }
 // One root popup across editor, list and settings. Subpanels stay in the same root.
 export function closePopups() { window.dispatchEvent(new Event("uranus-close-popups")); }
-export function Popup({ anchor, title, close, children, back, restoreFocus, className = "", placement = "bottom", onCopy, autoFocus = true, positionAnchor }: {
+export function Popup({ anchor, title, hideTitle = false, close, children, back, restoreFocus, className = "", placement = "bottom", onCopy, autoFocus = true, positionAnchor }: {
   anchor: PopupAnchor; title: string; close: () => void; children: ReactNode; back?: (() => void) | undefined; restoreFocus?: (() => void) | undefined; className?: string;
+  /** Keep `title` as the aria-label but hide the header text (e.g. when it duplicates visible content). */
+  hideTitle?: boolean;
   placement?: "top" | "bottom";
   onCopy?: ClipboardEventHandler<HTMLDivElement>;
   /** Set false for popups attached to editor content so the editor keeps focus and arrow keys keep moving the caret. */
@@ -104,7 +106,7 @@ export function Popup({ anchor, title, close, children, back, restoreFocus, clas
     if (event.key === "ArrowLeft" && back) { event.preventDefault(); back(); }
     if (event.key === "ArrowRight" && target.getAttribute("aria-haspopup") === "true") { event.preventDefault(); target.click(); }
   }}>
-    <header>{back && <button aria-label="返回上一级" onClick={back}>‹</button>}<strong>{title}</strong><button aria-label="关闭菜单" onClick={() => { close(); focusTrigger(); }}>×</button></header>
+    <header>{back && <button aria-label="返回上一级" onClick={back}>‹</button>}<strong>{hideTitle ? "" : title}</strong><button aria-label="关闭菜单" onClick={() => { close(); focusTrigger(); }}>×</button></header>
     <div className="object-popup-content">{children}</div>
   </div></>, anchor instanceof HTMLElement ? anchor.closest("dialog") ?? document.body : document.body);
 }

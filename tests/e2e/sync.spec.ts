@@ -1,6 +1,5 @@
-import { openWorkspaceMenu } from "./fixtures";
 // This suite verifies the production 30s default, not the general 5s fixture.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, openWorkspaceMenu, test, type Page } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 
 async function open(page: Page) {

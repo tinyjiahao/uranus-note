@@ -55,6 +55,26 @@ describe("D1 note consistency", () => {
     await expect(deleteAttachment(env.DB, env.UPLOADS, attachment.id)).rejects.toMatchObject({ code: "ATTACHMENT_REFERENCED" });
   });
 
+  it("returns the first current image in document order and updates it after edits", async () => {
+    const note = await createNote(env.DB, { operation_id: uuidv7(), content_schema_version: 15 });
+    const png = new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0,0,0,0,0]);
+    const uploadedFirst = await uploadAttachment(env.DB, env.UPLOADS, note.id, uuidv7(), new File([png], "uploaded-first.png", { type: "image/png" }));
+    const documentFirst = await uploadAttachment(env.DB, env.UPLOADS, note.id, uuidv7(), new File([png], "document-first.png", { type: "image/png" }));
+    const image = (attachment: typeof uploadedFirst) => ({ type: "image", attrs: { attachmentId: attachment.id, src: attachment.url } });
+    const content = { type: "doc", content: [
+      { type: "paragraph", content: [{ type: "text", text: "缩略图顺序" }] },
+      image(documentFirst),
+      { type: "table", content: [{ type: "tableRow", content: [{ type: "tableCell", content: [image(uploadedFirst)] }] }] },
+    ] };
+    const saved = await patchNote(env.DB, note.id, { operation_id: uuidv7(), expected_revision: note.revision, content_schema_version: 15, content });
+    expect((await listNotes(env.DB, {})).items.find(item => item.id === note.id)?.thumbnailAttachmentId).toBe(documentFirst.id);
+
+    await patchNote(env.DB, note.id, { operation_id: uuidv7(), expected_revision: saved.note.revision, content_schema_version: 15, content: {
+      type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "缩略图顺序" }] }, image(uploadedFirst)],
+    } });
+    expect((await listNotes(env.DB, { q: "缩略图" })).items.find(item => item.id === note.id)?.thumbnailAttachmentId).toBe(uploadedFirst.id);
+  });
+
   it("does not touch other applications' D1 tables or R2 prefixes", async () => {
     expect((await env.DB.prepare("SELECT value FROM sentinel_other_app WHERE id=1").first<{ value: string }>())?.value).toBe("keep");
     expect(await env.UPLOADS.head("other-app/keep.bin")).not.toBeNull();

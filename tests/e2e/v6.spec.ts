@@ -1,5 +1,4 @@
-import { openWorkspaceMenu } from "./fixtures";
-import { test, expect } from "@playwright/test";
+import { expect, openWorkspaceMenu, test } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 
 test.use({ trace: "off" });

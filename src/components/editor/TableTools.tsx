@@ -43,7 +43,7 @@ export function TablePicker({ editor, close, anchor, range }: { editor: Editor; 
         if (delta !== undefined) { event.preventDefault(); grid.current?.querySelector<HTMLButtonElement>('[data-index="' + Math.max(0, Math.min(35, index + delta)) + '"]')?.focus(); }
       }}>{Array.from({ length: 36 }, (_, i) => {
         const row = Math.floor(i / 6) + 1, col = i % 6 + 1;
-        return <button key={i} data-index={i} data-initial-focus={i === 7 ? "" : undefined} tabIndex={row === preview[0] && col === preview[1] ? 0 : -1} aria-label={row + " 行 " + col + " 列"} className={row <= preview[0]! && col <= preview[1]! ? "chosen" : ""} onFocus={() => setPreview([row, col])} onPointerEnter={() => setPreview([row, col])} onClick={() => insert(row, col)} />;
+        return <button key={i} data-index={i} data-initial-focus={i === 7 ? "" : undefined} tabIndex={row === preview[0] && col === preview[1] ? 0 : -1} aria-label={row + " 行 " + col + " 列"} className={row <= preview[0]! && col <= preview[1]! ? "chosen" : ""} onFocus={() => setPreview([row, col])} onPointerEnter={event => { setPreview([row, col]); event.currentTarget.focus({ preventScroll: true }); }} onClick={() => insert(row, col)} />;
       })}</div>
       <button aria-haspopup="true" onClick={() => setCustom(true)}>自定义尺寸…</button>
     </> : <>

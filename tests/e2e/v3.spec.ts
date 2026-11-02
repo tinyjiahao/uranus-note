@@ -79,6 +79,7 @@ test("grouped toolbar order, narrow sheet and readonly preserve access", async (
   await page.setViewportSize({ width: 375, height: 800 });
   await page.getByRole("button", { name: "笔记更多" }).click();
   const sheet = page.getByRole("dialog");
+  await page.waitForTimeout(200);
   const box = (await sheet.boundingBox())!;
   expect(box.x).toBe(0); expect(box.y + box.height).toBeCloseTo(800, 0);
   await page.keyboard.press("Escape"); await expect(page.getByRole("button", { name: "笔记更多" })).toBeFocused();
@@ -117,15 +118,17 @@ test("multi-cell context retains selection, widths target the rectangle and IME 
   await editor.locator(".tableWrapper").hover(); await page.getByRole("button", { name: "表格菜单", exact: true }).click();
   await page.getByRole("button", { name: "在表格上方继续输入" }).click();
   await page.keyboard.type("/table");
-  await page.keyboard.press("Enter"); await expect(page.getByRole("dialog", { name: "插入表格" })).toHaveCount(0);
-  await expect(editor).toContainText("/table");
+  await expect(page.getByRole("dialog", { name: "斜杠命令" })).toBeVisible();
+  await page.keyboard.press("Enter"); await expect(page.getByRole("dialog", { name: "斜杠命令" })).toHaveCount(0);
+  await expect(editor).not.toContainText("/table");
+  await expect(editor.locator("table")).toHaveCount(2);
   await editor.locator("p").first().click(); await page.keyboard.press("End");
   await page.keyboard.type("x"); await page.keyboard.press("Backspace");
   await editor.dispatchEvent("compositionstart");
   await editor.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
   await expect(page.getByRole("dialog", { name: "插入表格" })).toHaveCount(0);
   await editor.dispatchEvent("compositionend");
-  await expect(editor.locator("table")).toHaveCount(1);
+  await expect(editor.locator("table")).toHaveCount(2);
   await page.screenshot({ path: "test-results/v3-desktop-table.png" });
 });
 

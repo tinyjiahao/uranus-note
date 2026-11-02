@@ -8,11 +8,15 @@ import { NoteLinkNode, NoteLinkPopup } from "./noteLinks";
 import { FileSymlink } from "lucide-react";
 import { Tag } from "lucide-react";
 import { installPrintImages } from "./printing";
+import { parseMarkdownPaste } from "./markdownPaste";
 import { ImagePreview } from "./ImagePreview";
 import { BlockDrag } from "./blockDrag";
 import { InlineImage, insertImage } from "./inlineImage";
 import { BlockIndent, changeIndent, indentAvailability } from "./indent";
 import { CodeBlockView } from "./codeBlockView";
+import { CODE_LANGUAGES } from "./codeHighlight";
+import { CopyLine } from "./copyLine";
+import { SlashMenu } from "./slashMenu";
 import { AttachmentPreviewHost } from "../AttachmentPreview";
 import { OutlinePopup, headings } from "./OutlinePopup";
 import { ListTree } from "lucide-react";
@@ -22,7 +26,7 @@ import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import { IndentIncrease, IndentDecrease, ExternalLink, Pencil, Unlink } from "lucide-react";
+import { IndentIncrease, IndentDecrease, ExternalLink, Pencil, Unlink, CalendarDays, Clock } from "lucide-react";
 import { tableExtensions, tableContext } from "./tables";
 import { CellSelection } from "@tiptap/pm/tables";
 import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
@@ -215,6 +219,17 @@ function literalRanges(value: string, query: string) {
   return ranges;
 }
 
+function findTextRange(doc: import("@tiptap/pm/model").Node, needle: string) {
+  let found: { from: number; to: number } | null = null;
+  doc.descendants((node, pos) => {
+    if (found || !node.isText || !node.text) return !found;
+    const offset = node.text.indexOf(needle);
+    if (offset >= 0) { found = { from: pos + offset, to: pos + offset + needle.length }; return false; }
+    return true;
+  });
+  return found as { from: number; to: number } | null;
+}
+
 function repairRectangularTables(input: ContentNode) {
   const repaired = structuredClone(input), added = { count: 0 };
   const visit = (node: ContentNode) => {
@@ -335,10 +350,13 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   const [tablePicker, setTablePicker] = useState<{ anchor: PopupAnchor; range?: { from: number; to: number } } | null>(null);
   const [editorError, setEditorError] = useState("");
   const [editorNotice, setEditorNotice] = useState("");
+  const [editorNoticeClosing, setEditorNoticeClosing] = useState(false);
   useEffect(() => {
     if (!editorNotice) return;
-    const timer = window.setTimeout(() => setEditorNotice(""), 3000);
-    return () => window.clearTimeout(timer);
+    setEditorNoticeClosing(false);
+    const closing = window.setTimeout(() => setEditorNoticeClosing(true), 2840);
+    const clear = window.setTimeout(() => setEditorNotice(""), 3000);
+    return () => { window.clearTimeout(closing); window.clearTimeout(clear); };
   }, [editorNotice]);
   const [upload, setUpload] = useState<{ file: File; busy: boolean; error: string } | null>(null);
   const uploadBookmark = useRef<SelectionBookmark | null>(null);
@@ -360,9 +378,12 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   const [paragraphPopup, setParagraphPopup] = useState<PopupAnchor | null>(null);
   const [outline, setOutline] = useState<PopupAnchor | null>(null);
   const [noteLinkPopup, setNoteLinkPopup] = useState<PopupAnchor | null>(null);
+  const [codeLanguagePopup, setCodeLanguagePopup] = useState<{ anchor: HTMLElement; pos: number } | null>(null);
   const [find, setFind] = useState("");
+  const [replaceText, setReplaceText] = useState("");
   const [findIndex, setFindIndex] = useState(0);
   const [findCount, setFindCount] = useState(0);
+  const [findBodyCount, setFindBodyCount] = useState(0);
   const [findTitleActive, setFindTitleActive] = useState(false);
   const extensions = useMemo(() => [
     Extension.create({ name: "titleFocusFallback", priority: -100, addProseMirrorPlugins() { return [new Plugin({ props: { handleKeyDown: (view, event) => {
@@ -375,7 +396,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       const field = titleFieldRef.current; if (!field || field.readOnly) return false;
       field.focus(); field.setSelectionRange(field.value.length, field.value.length); return true;
     } } })]; } }),
-    StarterKit.configure({ link: false, underline: false }), Underline, ColoredHighlight, TextColor, TaskList, TaskItem.configure({ nested: true }), SmallText, CodeBoundary, QuoteKeys, InlineAtomDrag, CellTailClick, PasteInline, CodeBlockControls, CodeBlockView,
+    StarterKit.configure({ link: false, underline: false }), Underline, ColoredHighlight, TextColor, TaskList, TaskItem.configure({ nested: true }), SmallText, CodeBoundary, QuoteKeys, InlineAtomDrag, CellTailClick, PasteInline, CodeBlockControls, CodeBlockView, CopyLine,
     TextAlign.extend({ addKeyboardShortcuts() { return {
       "Mod-Shift-l": () => alignText(this.editor, "left"),
       "Mod-Shift-e": () => alignText(this.editor, "center"),
@@ -383,6 +404,20 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     }; } }).configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: null }),
     Link.configure({ openOnClick: false, autolink: true, defaultProtocol: "https", protocols: ["http", "https", "mailto"], HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } }),
     ...tableExtensions, AttachmentImage.configure({ inline: false, allowBase64: false }), InlineImage, BlockIndent, SearchHighlight, LabelNode, FileAttachment, InlineFile, NoteLinkNode, BlockDrag,
+    SlashMenu.configure({ items: [
+      { id: "code", label: "代码块", keywords: "code daima", run: e => e.chain().focus().toggleCodeBlock().run() },
+      { id: "h1", label: "标题 1", keywords: "h1 biaoti", run: e => e.chain().focus().setHeading({ level: 1 }).run() },
+      { id: "h2", label: "标题 2", keywords: "h2 biaoti", run: e => e.chain().focus().setHeading({ level: 2 }).run() },
+      { id: "h3", label: "标题 3", keywords: "h3 biaoti", run: e => e.chain().focus().setHeading({ level: 3 }).run() },
+      { id: "quote", label: "引用", keywords: "quote yinyong", run: e => e.chain().focus().toggleBlockquote().run() },
+      { id: "bullet", label: "无序列表", keywords: "list wuxu", run: e => e.chain().focus().toggleBulletList().run() },
+      { id: "ordered", label: "有序列表", keywords: "ordered youxu", run: e => e.chain().focus().toggleOrderedList().run() },
+      { id: "todo", label: "待办", keywords: "todo daiban task", run: e => e.chain().focus().toggleTaskList().run() },
+      { id: "hr", label: "分隔线", keywords: "hr fenge", run: e => e.chain().focus().setHorizontalRule().run() },
+      { id: "table", label: "表格 3×3", keywords: "table biaoge", run: e => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+      { id: "date", label: "当前日期", keywords: "date riqi", run: e => { const d = new Date(); return e.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`).run(); } },
+      { id: "datetime", label: "当前日期时间", keywords: "datetime shijian", run: e => { const d = new Date(); return e.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`).run(); } },
+    ] }),
   ], []);
   const options = useMemo(() => ({
     extensions, content: initialParts.body, immediatelyRender: false, shouldRerenderOnTransaction: false,
@@ -426,6 +461,15 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     toolbar.addEventListener("scroll", update, { passive: true });
     return () => { observer.disconnect(); toolbar.removeEventListener("scroll", update); };
   }, [editor, readOnly]);
+  useEffect(() => {
+    if (!editor) return;
+    const openLanguage = (event: Event) => {
+      const detail = (event as CustomEvent<{ anchor: HTMLElement; pos: number }>).detail;
+      if (detail?.anchor && Number.isInteger(detail.pos)) setCodeLanguagePopup(detail);
+    };
+    editor.view.dom.addEventListener("uranus-code-language", openLanguage);
+    return () => editor.view.dom.removeEventListener("uranus-code-language", openLanguage);
+  }, [editor]);
   useEffect(() => {
     if (!editor) return;
     const map = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => { if (uploadBookmark.current) uploadBookmark.current = uploadBookmark.current.map(transaction.mapping); };
@@ -486,7 +530,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       const total = titleRanges.length + bodyCount;
       const active = total ? ((findIndex % total) + total) % total : 0;
       const titleActive = total > 0 && active < titleRanges.length;
-      setFindCount(total); setFindTitleActive(titleActive);
+      setFindCount(total); setFindBodyCount(bodyCount); setFindTitleActive(titleActive);
       if (titleActive) {
         updateEditorSearch(editor, query, -1);
         const range = titleRanges[active]!;
@@ -545,6 +589,28 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     setReadOnly(next);
   };
   const matches = findCount || searchHighlightKey.getState(editor.state)?.ranges.length || 0;
+  const replaceCurrent = () => {
+    const state = searchHighlightKey.getState(editor.state);
+    const titleCount = literalRanges(titleValue, find).length;
+    const total = titleCount + (state?.ranges.length ?? 0);
+    if (!state || !total) return;
+    const active = ((findIndex % total) + total) % total;
+    if (active < titleCount) return;
+    const range = state.ranges[active - titleCount];
+    if (!range) return;
+    editor.chain().focus().insertContentAt({ from: range.from, to: range.to }, replaceText).run();
+    setFindIndex(active + literalRanges(replaceText, find).length);
+  };
+  const replaceAll = () => {
+    const state = searchHighlightKey.getState(editor.state);
+    if (!state || !state.ranges.length) return;
+    const count = state.ranges.length;
+    const tr = editor.state.tr;
+    [...state.ranges].sort((a, b) => b.from - a.from).forEach(range => tr.insertText(replaceText, range.from, range.to));
+    editor.view.dispatch(tr);
+    setFindIndex(0);
+    setEditorNotice(`已替换 ${count} 处`);
+  };
   const exportOriginal = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(note.content, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = `uranus-note-${note.id}-original.json`; link.click();
@@ -628,6 +694,38 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   pasteHandler.current = (event, slice) => {
     if (readOnly) return false;
     const html = event.clipboardData?.getData("text/html") ?? "";
+    // V9-06: plain-text paste with no HTML — try Markdown conversion first.
+    if (!html.trim()) {
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      const parsed = parseMarkdownPaste(text);
+      if (parsed) {
+        event.preventDefault();
+        const pasteId = crypto.randomUUID();
+        const placeholders = parsed.pending.map((_, index) => `〔图片上传中 ${pasteId}-${index}〕`);
+        const mapPlaceholder = (node: ContentNode): ContentNode => {
+          const pendingIndex = typeof node.attrs?.pending === "number" ? node.attrs.pending as number : -1;
+          if (pendingIndex >= 0) return { type: "text", text: placeholders[pendingIndex]! };
+          return node.content ? { ...node, content: node.content.map(mapPlaceholder) } : node;
+        };
+        const inserted = editor.chain().focus().insertContent(parsed.blocks.map(mapPlaceholder)).run();
+        if (!inserted) { editor.chain().focus().insertContent(text).run(); return true; }
+        void (async () => {
+          for (let index = 0; index < parsed.pending.length; index++) {
+            const item = parsed.pending[index]!, placeholder = placeholders[index]!;
+            let attachment: AttachmentDto | null = null;
+            try { attachment = await uploadAttachment(note.id, item.file); } catch { /* Replace this one placeholder below; later images still upload in order. */ }
+            if (editor.isDestroyed) return;
+            const range = findTextRange(editor.state.doc, placeholder);
+            if (!range) continue;
+            const replacement = attachment
+              ? editor.schema.nodes.inlineImage!.create({ attachmentId: attachment.id, src: attachment.url, alt: item.alt })
+              : editor.schema.text(`[${item.alt || "图片"}](${item.src})`);
+            editor.view.dispatch(editor.state.tr.replaceWith(range.from, range.to, replacement));
+          }
+        })();
+        return true;
+      }
+    }
     try {
       const table = externalTable(html);
       if (table) {
@@ -795,6 +893,8 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       <Tool showLabel label="分隔线" disabled={readOnly} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus /></Tool>
       <Tool showLabel label="插入标签" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => setLabelPopup({ anchor: editor.view.coordsAtPos(editor.state.selection.from) })}><Tag /></Tool>
       <Tool showLabel label="插入笔记链接" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => setNoteLinkPopup(editor.view.coordsAtPos(editor.state.selection.from))}><FileSymlink /></Tool>
+      <Tool showLabel label="插入日期" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => { const d = new Date(); editor.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`).run(); }}><CalendarDays /></Tool>
+      <Tool showLabel label="插入日期时间" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => { const d = new Date(); editor.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`).run(); }}><Clock /></Tool>
       <label className={`toolbar-file-action ${readOnly || upload?.busy ? "disabled" : ""}`} title="上传文件附件" aria-label="上传文件附件"><Paperclip /><span>上传文件附件</span><input type="file" accept={fileAccept} disabled={readOnly || upload?.busy} onChange={async event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) { setMorePopup(null); await uploadImage(fileWithMime(file)); } }} /></label>
         </div>
       </Popup>}
@@ -804,7 +904,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       <Tool label={widthMode === "fluid" ? "切换舒适阅读" : "切换自适应宽版"} active={widthMode === "reading"} onClick={() => setWidthMode(widthMode === "fluid" ? "reading" : "fluid")}><MoveHorizontal /></Tool>
     </div>; }}</ReactiveToolbar>
     {editorError && <div className="error-banner" role="alert">{editorError}</div>}
-    {editorNotice && <div className="editor-notice" role="status">{editorNotice}<button aria-label="关闭提示" onClick={() => setEditorNotice("")}>×</button></div>}
+    {editorNotice && <div className={`editor-notice${editorNoticeClosing ? " is-leaving" : ""}`} role="status">{editorNotice}<button aria-label="关闭提示" onClick={() => { setEditorNoticeClosing(true); window.setTimeout(() => setEditorNotice(""), 160); }}>×</button></div>}
     {structureIssue && <div className="draft-banner structure-warning" role="alert"><span>检测到原始正文结构异常：{structureIssue.message}。服务器原文尚未改写。</span><button onClick={exportOriginal}>导出原始 JSON</button>{structureIssue.repair && <details><summary>预览修复</summary><pre>{JSON.stringify(structureIssue.repair.content, null, 2).slice(0, 10_000)}{JSON.stringify(structureIssue.repair.content).length > 10_000 ? "\n…预览已截断" : ""}</pre><button disabled={readOnly} onClick={applyStructureRepair}>补齐 {structureIssue.repair.added} 个空单元格并应用</button></details>}</div>}
     {upload && <div className="draft-banner" role="status"><span>{upload.busy ? "正在上传附件：" : "附件上传未完成："}{upload.file.name}{upload.error && " · " + upload.error}</span>{!upload.busy && <><button disabled={readOnly} onClick={() => void uploadImage(upload.file, true)}>重试上传</button><button onClick={() => { uploadBookmark.current = null; setUpload(null); }}>取消上传</button></>}</div>}
     {pasteError && <div className="draft-banner" role="alert"><span>图片粘贴未完成：{pasteError}</span><button disabled={readOnly} onClick={() => retryPaste.current?.()}>重试粘贴</button><button onClick={() => { retryPaste.current = null; uploadBookmark.current = null; setPasteError(""); }}>取消</button></div>}
@@ -814,8 +914,15 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     {paragraphPopup && !readOnly && <ParagraphStyles editor={editor} anchor={paragraphPopup} close={() => setParagraphPopup(null)} />}
     {outline && <OutlinePopup editor={editor} anchor={outline} close={() => setOutline(null)} />}
     {noteLinkPopup && !readOnly && <NoteLinkPopup editor={editor} anchor={noteLinkPopup} close={() => setNoteLinkPopup(null)} />}
+    {codeLanguagePopup && !readOnly && <Popup anchor={codeLanguagePopup.anchor} title="选择代码语言" close={() => setCodeLanguagePopup(null)} restoreFocus={() => editor.view.focus()}>
+      {CODE_LANGUAGES.map(option => <button key={option.id} onClick={() => {
+        const node = editor.state.doc.nodeAt(codeLanguagePopup.pos);
+        if (node?.type.name === "codeBlock") editor.view.dispatch(editor.state.tr.setNodeMarkup(codeLanguagePopup.pos, undefined, { ...node.attrs, language: option.id === "text" ? null : option.id }));
+        setCodeLanguagePopup(null); editor.view.focus();
+      }}>{option.label}</button>)}
+    </Popup>}
     <TableTools editor={editor} readOnly={readOnly} showRowNumbers={showRowNumbers} onShowRowNumbers={(value) => { setShowRowNumbers(value); writePreference("uranus.table.rowNumbers", value ? "1" : "0"); }} />
-    {findOpen && <div className="find-bar"><input autoFocus placeholder="在笔记中查找" value={find} onChange={(event) => { setFind(event.target.value); setFindIndex(0); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && matches) { event.preventDefault(); setFindIndex((value) => event.shiftKey ? value - 1 : value + 1); } if (event.key === "Escape") { setFind(""); setFindOpen(false); editor.commands.focus(); } }} /><span>{findTitleActive ? "标题 · " : ""}{find ? matches ? `${(findIndex % matches + matches) % matches + 1}/${matches}` : "0/0" : "0/0"}</span><button aria-label="上一个匹配" disabled={!matches} onClick={() => setFindIndex(value => value - 1)}>↑</button><button aria-label="下一个匹配" disabled={!matches} onClick={() => setFindIndex(value => value + 1)}>↓</button><button onClick={() => { setFind(""); setFindOpen(false); editor.commands.focus(); }}>完成</button></div>}
+    {findOpen && <div className="find-bar"><input autoFocus placeholder="在笔记中查找" value={find} onChange={(event) => { setFind(event.target.value); setFindIndex(0); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && matches) { event.preventDefault(); setFindIndex((value) => event.shiftKey ? value - 1 : value + 1); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} />{!readOnly && <><input placeholder="替换为" value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); replaceCurrent(); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} /><button disabled={!find || !matches || findTitleActive} title={findTitleActive ? "标题中的匹配不支持替换" : undefined} onClick={replaceCurrent}>替换</button><button disabled={!find || !findBodyCount} onClick={replaceAll}>全部替换</button></>}<span>{findTitleActive ? "标题 · " : ""}{find ? matches ? `${(findIndex % matches + matches) % matches + 1}/${matches}` : "0/0" : "0/0"}</span><button aria-label="上一个匹配" disabled={!matches} onClick={() => setFindIndex(value => value - 1)}>↑</button><button aria-label="下一个匹配" disabled={!matches} onClick={() => setFindIndex(value => value + 1)}>↓</button><button onClick={() => { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); }}>完成</button></div>}
     {linkActions && <Popup className="link-actions-popup" anchor={linkActions.anchor} title="链接操作" close={() => setLinkActions(null)} restoreFocus={() => editor.view.focus()}>
       <button onClick={() => { const opened = window.open(linkActions.href, "_blank", "noopener,noreferrer"); if (opened) opened.opener = null; }}><ExternalLink aria-hidden="true" /><span>打开链接</span></button>
       <button onClick={() => openLinkDialog(linkActions)}><Pencil aria-hidden="true" /><span>编辑链接</span></button>

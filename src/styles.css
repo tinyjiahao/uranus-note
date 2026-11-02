@@ -664,3 +664,74 @@ dialog.image-preview > img { display: block; max-width: 100%; max-height: 100%; 
 .prose-editor .inline-file { margin: 0 3px; }
 .prose-editor .note-link { margin: 0 2px; }
 .prose-editor p > :is(.label-chip, .inline-file, .note-link):first-child, .prose-editor .react-renderer:first-child .note-link { margin-left: 0; }
+
+/* V9-09: enter transitions only — keyframes leave no residual transform (fixed-position safety). */
+@keyframes uranus-fade-in { from { opacity: 0; } }
+@keyframes uranus-popup-in { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+@keyframes uranus-sheet-in { from { opacity: 0; transform: translateY(100%); } }
+@keyframes uranus-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } }
+@keyframes uranus-toast-out { to { opacity: 0; transform: translateX(-50%) translateY(8px); } }
+@keyframes uranus-drawer-in { from { opacity: 0; transform: translateX(100%); } }
+
+.object-popup { animation: uranus-popup-in 140ms ease-out; }
+.popup-backdrop { animation: uranus-fade-in 140ms ease-out; }
+.notice, .editor-notice { animation: uranus-toast-in 160ms ease-out; }
+.notice.is-leaving, .editor-notice.is-leaving { animation: uranus-toast-out 160ms ease-in forwards; pointer-events: none; }
+.settings-drawer { animation: uranus-drawer-in 160ms ease-out; }
+.folder-dialog, .link-dialog, .table-picker { animation: uranus-fade-in 120ms ease-out; }
+.attachment-preview { animation: uranus-drawer-in 160ms ease-out; }
+
+@media (max-width: 767px) {
+  .object-popup { animation-name: uranus-sheet-in; }
+}
+
+button, .note-row, .scope-button, .load-more, .folder-row { transition: background-color 110ms ease-out, opacity 110ms ease-out; }
+.table-handles .table-insert-row, .table-handles .table-insert-column, .block-drag-handle, .inline-drag-handle, .image-resize-handle { transition: opacity 110ms ease-out, background-color 110ms ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* V9-03 code block: language dropdown / format button / hljs token colors. */
+.code-language { align-self: center; max-width: 108px; padding: 2px 4px; border: 1px solid var(--code-border); border-radius: 6px; background: var(--panel); color: var(--muted); font: inherit; font-size: 12px; line-height: 1.6; cursor: pointer; opacity: .85; }
+.code-language:disabled { cursor: default; }
+.code-format { padding: 2px 10px; border: 1px solid var(--code-border); border-radius: 6px; background: var(--panel); color: var(--muted); font: inherit; font-size: 12px; line-height: 1.6; cursor: pointer; opacity: .85; }
+.code-language:hover:not(:disabled), .code-format:hover { opacity: 1; color: var(--text); background: var(--panel-soft); }
+
+.prose-editor pre .hljs-keyword, .prose-editor pre .hljs-selector-tag, .prose-editor pre .hljs-built_in { color: #7c3aed; }
+.prose-editor pre .hljs-string, .prose-editor pre .hljs-template-string { color: #166534; }
+.prose-editor pre .hljs-attr { color: #1d4ed8; }
+.prose-editor pre .hljs-number, .prose-editor pre .hljs-literal { color: #b45309; }
+.prose-editor pre .hljs-comment, .prose-editor pre .hljs-quote { color: #6d6960; font-style: italic; }
+.prose-editor pre .hljs-title, .prose-editor pre .hljs-name, .prose-editor pre .hljs-section { color: #1d4ed8; }
+.prose-editor pre .hljs-type, .prose-editor pre .hljs-class { color: #0e7490; }
+.prose-editor pre .hljs-meta, .prose-editor pre .hljs-tag, .prose-editor pre .hljs-punctuation { color: var(--muted); }
+.prose-editor pre .hljs-variable, .prose-editor pre .hljs-template-variable { color: #9d174d; }
+.prose-editor pre .hljs-regexp, .prose-editor pre .hljs-symbol, .prose-editor pre .hljs-link { color: #be185d; }
+.prose-editor pre .hljs-deletion { color: #b3261e; }
+.prose-editor pre .hljs-addition { color: #166534; }
+.prose-editor pre .hljs-emphasis { font-style: italic; }
+.prose-editor pre .hljs-strong { font-weight: 700; }
+:root[data-theme="dark"] .prose-editor pre .hljs-keyword, :root[data-theme="dark"] .prose-editor pre .hljs-selector-tag, :root[data-theme="dark"] .prose-editor pre .hljs-built_in { color: #c4b5fd; }
+:root[data-theme="dark"] .prose-editor pre .hljs-string, :root[data-theme="dark"] .prose-editor pre .hljs-template-string { color: #86efac; }
+:root[data-theme="dark"] .prose-editor pre .hljs-attr { color: #93c5fd; }
+:root[data-theme="dark"] .prose-editor pre .hljs-number, :root[data-theme="dark"] .prose-editor pre .hljs-literal { color: #fbbf24; }
+:root[data-theme="dark"] .prose-editor pre .hljs-comment, :root[data-theme="dark"] .prose-editor pre .hljs-quote { color: #9b9689; }
+:root[data-theme="dark"] .prose-editor pre .hljs-title, :root[data-theme="dark"] .prose-editor pre .hljs-name, :root[data-theme="dark"] .prose-editor pre .hljs-section { color: #93c5fd; }
+:root[data-theme="dark"] .prose-editor pre .hljs-type, :root[data-theme="dark"] .prose-editor pre .hljs-class { color: #67e8f9; }
+:root[data-theme="dark"] .prose-editor pre .hljs-variable, :root[data-theme="dark"] .prose-editor pre .hljs-template-variable { color: #f9a8d4; }
+:root[data-theme="dark"] .prose-editor pre .hljs-regexp, :root[data-theme="dark"] .prose-editor pre .hljs-symbol, :root[data-theme="dark"] .prose-editor pre .hljs-link { color: #f472b6; }
+:root[data-theme="dark"] .prose-editor pre .hljs-deletion { color: #ffb4ab; }
+:root[data-theme="dark"] .prose-editor pre .hljs-addition { color: #86efac; }
+
+/* V9-02: first-image thumbnail in note list rows. */
+.note-row { display: flex; align-items: center; gap: 10px; }
+.note-row-main { flex: 1; min-width: 0; display: block; }
+.note-row-title { display: flex; gap: 6px; align-items: center; }
+.note-thumb { flex: 0 0 auto; width: 52px; height: 40px; object-fit: cover; border-radius: 6px; background: var(--panel-soft); }
+
+/* V9-10: slash command menu rendered as an in-editor widget. */
+.slash-menu { position: fixed; z-index: 40; min-width: 180px; max-height: 260px; overflow: auto; display: flex; flex-direction: column; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); }
+.slash-item { display: block; width: 100%; padding: 7px 10px; border-radius: 6px; text-align: left; font-size: 13px; color: var(--text); }
+.slash-item.active, .slash-item:hover { background: color-mix(in srgb, var(--accent) 25%, var(--panel)); }
+.slash-empty { color: var(--muted); cursor: default; }

@@ -34,12 +34,11 @@ test("login, edit, persist and search a note", async ({ page }) => {
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/h2");
-  await expect(page.getByRole("listbox", { name: "斜杠命令" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "斜杠命令" })).toBeVisible();
   await page.keyboard.press("Enter");
   await page.keyboard.type("分节标题");
-  await expect(editor).toContainText("/h2");
-  await expect(editor.locator("p")).toContainText(["/h2", "分节标题"]);
-  await expect(editor.locator("h2")).toHaveCount(0);
+  await expect(editor).not.toContainText("/h2");
+  await expect(editor.locator("h2")).toHaveText("分节标题");
   await expect(page.getByText("已保存到服务器", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.getByPlaceholder("搜索标题和正文").fill(title);
   await expect(page.locator(".note-row").filter({ hasText: title }).first()).toBeVisible();

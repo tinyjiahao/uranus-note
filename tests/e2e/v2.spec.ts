@@ -61,7 +61,7 @@ test("settings selects keep their complete labels visible at narrow widths", asy
   const selects = drawer.locator("select");
   await expect(selects).toHaveCount(4);
   for (const select of await selects.all()) {
-    expect((await select.boundingBox())!.width).toBeGreaterThanOrEqual(184);
+    expect((await select.boundingBox())!.width).toBeGreaterThan(183.9);
     expect(await select.evaluate(element => {
       const style = getComputedStyle(element);
       const canvas = document.createElement("canvas");

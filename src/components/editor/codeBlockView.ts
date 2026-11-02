@@ -1,12 +1,18 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { CODE_LANGUAGES, HIGHLIGHT_MAX_CHARS, highlightDecorations, looksLikeJson } from "./codeHighlight";
 
 // Code block display features: line numbers (display only) and a fold state. Editable notes persist the fold state in the `collapsed` attribute (content schema 14);
 // read-only or trashed notes cannot be modified, so there the toggle is a per-session override kept in plugin state.
 export const foldKey = new PluginKey<Set<number>>("codeBlockFold");
 const FOLD_MIN_LINES = 9;
 const MAX_NUMBERED_LINES = 5000;
+const textKey = (value: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return (hash >>> 0).toString(36);
+};
 
 const lineNumber = (n: number) => () => {
   const span = document.createElement("span");
@@ -53,6 +59,14 @@ export const CodeBlockView = Extension.create({
             const text = node.textContent, lines = text.split("\n").length;
             const folded = lines >= FOLD_MIN_LINES && ((node.attrs.collapsed === true) !== collapsed.has(pos));
             decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: `code-numbered${folded ? " code-collapsed" : ""}` }));
+            // V9-03: highlight via lowlight for registered languages; unlabeled
+            // blocks that look like JSON are highlighted as JSON without
+            // writing a language attribute onto the node.
+            const language = (node.attrs.language ?? "").toLowerCase();
+            if (!folded && text.length <= HIGHLIGHT_MAX_CHARS) {
+              const target = language || (looksLikeJson(text) ? "json" : "");
+              if (target) decorations.push(...highlightDecorations(target, text, pos + 1));
+            }
             decorations.push(Decoration.widget(pos + 1, view => {
               const actions = document.createElement("span");
               actions.className = "code-actions"; actions.contentEditable = "false";
@@ -75,14 +89,37 @@ export const CodeBlockView = Extension.create({
                 });
                 fold.setAttribute("aria-expanded", String(!folded));
               }
+              const languageOption = CODE_LANGUAGES.find(option => option.id === language);
+              const languageLabel = languageOption?.label ?? (language || "文本");
+              const lang = make(languageLabel, "code-language", button => {
+                if (!view.editable) return;
+                view.dom.dispatchEvent(new CustomEvent("uranus-code-language", { detail: { pos, anchor: button } }));
+              });
+              lang.setAttribute("aria-label", `代码语言：${languageLabel}`);
+              lang.setAttribute("aria-haspopup", "dialog");
+              lang.disabled = !view.editable;
+              if (view.editable && looksLikeJson(text)) {
+                make("格式化", "code-format", () => {
+                  const current = view.state.doc.nodeAt(pos);
+                  if (!current || current.type.name !== "codeBlock") return;
+                  try {
+                    const formatted = JSON.stringify(JSON.parse(current.textContent), null, 2);
+                    if (formatted === current.textContent) return;
+                    view.dispatch(view.state.tr.insertText(formatted, pos + 1, pos + current.nodeSize - 1));
+                  } catch {
+                    window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: "JSON 解析失败，无法进行格式化" }));
+                  }
+                });
+              }
               const copy = make("复制", "code-copy", button => {
-                navigator.clipboard.writeText(text).then(() => {
+                const current = view.state.doc.nodeAt(pos);
+                navigator.clipboard.writeText(current?.type.name === "codeBlock" ? current.textContent : "").then(() => {
                   button.textContent = "已复制"; setTimeout(() => { button.textContent = "复制"; }, 1500);
                 }).catch(() => window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: "复制代码失败，请检查剪贴板权限" })));
               });
               copy.setAttribute("aria-label", "复制代码");
               return actions;
-            }, { side: -2, key: `actions-${pos}-${folded ? 1 : 0}-${lines}-${text.length}`, ignoreSelection: true, stopEvent: () => true }));
+            }, { side: -2, key: `actions-${pos}-${folded ? 1 : 0}-${lines}-${text.length}-${textKey(text)}-${language}`, ignoreSelection: true, stopEvent: () => true }));
             if (lines <= MAX_NUMBERED_LINES) {
               let offset = 0;
               text.split("\n").forEach((line, index) => {

@@ -8,6 +8,10 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
+  // Browser cases share the intentionally rate-limited local admin account.
+  // Run serially so the suite validates the production limiter instead of
+  // creating synchronized login/retry storms across independent workers.
+  workers: 1,
   use: { baseURL, trace: "retain-on-failure" },
   projects: [{ name: "chrome", use: { ...devices["Desktop Chrome"], channel: "chrome" } }],
   webServer: {

@@ -21,6 +21,7 @@ test("text and highlight colors combine, round-trip HTML, persist and clear inde
   const popup = page.locator(".text-colors-popup");
   for (const theme of ["light", "dark"]) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await page.waitForTimeout(200);
     const buttonBox = (await trigger.boundingBox())!, popupBox = (await popup.boundingBox())!;
     expect(Math.abs(popupBox.y - buttonBox.y - buttonBox.height - 6)).toBeLessThan(2);
     expect(Math.abs(popupBox.x - buttonBox.x)).toBeLessThan(2);

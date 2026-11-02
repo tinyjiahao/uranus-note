@@ -26,6 +26,7 @@ export const NoteLinkNode = Node.create({
     return parsed.success ? parsed.data : false;
   } }],
   renderHTML: ({ node }) => ["span", { "data-note-link": "1", "data-id": node.attrs.noteId, "data-title": node.attrs.title }, node.attrs.title || "未命名笔记"],
+  renderText: ({ node }) => String(node.attrs.title || "未命名笔记"),
   addNodeView: () => ReactNodeViewRenderer(NoteLinkView),
 });
 export function NoteLinkPopup({ editor, anchor, close }: { editor: Editor; anchor: PopupAnchor; close: () => void }) {
