@@ -1,3 +1,5 @@
+import { t, useLocale } from "../../state/locale";
+import { useReadingPosition } from "./useReadingPosition";
 import { ColoredHighlight, TextColor, TextColorsPopup } from "./textColors";
 import { ParagraphStyles, paragraphStyle } from "./ParagraphStyles";
 import { InlineAtomDrag, LabelNode, LabelPopup } from "./labels";
@@ -192,12 +194,12 @@ function externalTable(html: string): ContentNode | null {
   const document = new DOMParser().parseFromString(html, "text/html");
   const table = document.querySelector("table");
   if (!table) return null;
-  if (table.querySelector("table table")) throw new Error("暂不支持粘贴嵌套表格");
+  if (table.querySelector("table table")) throw new Error(t("暂不支持粘贴嵌套表格"));
   const rows = Array.from(table.rows);
-  if (!rows.length || rows.length > 100) throw new Error("表格行数必须为 1—100");
-  if (rows.some(row => Array.from(row.cells).some(cell => cell.rowSpan !== 1 || cell.colSpan !== 1))) throw new Error("暂不支持含合并单元格的表格，请先取消合并后重试");
+  if (!rows.length || rows.length > 100) throw new Error(t("表格行数必须为 1—100"));
+  if (rows.some(row => Array.from(row.cells).some(cell => cell.rowSpan !== 1 || cell.colSpan !== 1))) throw new Error(t("暂不支持含合并单元格的表格，请先取消合并后重试"));
   const columns = Math.max(...rows.map(row => row.cells.length));
-  if (!columns || columns > 30) throw new Error("表格列数必须为 1—30");
+  if (!columns || columns > 30) throw new Error(t("表格列数必须为 1—30"));
   return { type: "table", attrs: { widthMode: "fluid" }, content: rows.map(row => ({
     type: "tableRow",
     content: Array.from({ length: columns }, (_, index) => {
@@ -258,6 +260,7 @@ function alignText(editor: Editor, alignment: "left" | "center" | "right") {
 }
 
 function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }: NodeViewProps) {
+  useLocale();
   const [preview, setPreview] = useState(false);
   const initial = typeof node.attrs.width === "number" ? node.attrs.width : undefined;
   const [width, setWidth] = useState<number | undefined>(initial);
@@ -277,8 +280,8 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
     <span className="image-frame" draggable data-drag-handle contentEditable={false}>
     <img draggable={false} loading="lazy" decoding="async" src={String(node.attrs.src)} data-attachment-id={String(node.attrs.attachmentId ?? "")} alt={String(node.attrs.alt ?? "")} style={width ? { width } : undefined} onClick={() => {
       const pos = getPos(); if (typeof pos === "number") editor.commands.setNodeSelection(pos);
-    }} title="双击放大图片" onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); setPreview(true); }} />
-    {editor.isEditable && <button className="image-resize-handle" aria-label="调整图片宽度" onPointerDown={(event) => {
+    }} title={t("双击放大图片")} onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); setPreview(true); }} />
+    {editor.isEditable && <button className="image-resize-handle" aria-label={t("调整图片宽度")} onPointerDown={(event) => {
       event.preventDefault(); event.stopPropagation();
       if (!editor.isEditable) return;
       const image = event.currentTarget.previousElementSibling as HTMLImageElement;
@@ -302,7 +305,7 @@ function ResizableImageNode({ node, updateAttributes, editor, getPos, selected }
       };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", cancel); window.addEventListener("blur", cancel); window.addEventListener("keydown", key);
     }} />}
-    {editor.isEditable && selected && <button className="image-menu-button" aria-label="图片操作" aria-haspopup="dialog" onMouseDown={event => event.preventDefault()} onClick={event => openMenu(event.currentTarget)}>•••</button>}
+    {editor.isEditable && selected && <button className="image-menu-button" aria-label={t("图片操作")} aria-haspopup="dialog" onMouseDown={event => event.preventDefault()} onClick={event => openMenu(event.currentTarget)}>•••</button>}
     {preview && <ImagePreview src={String(node.attrs.src)} alt={String(node.attrs.alt ?? "")} close={() => setPreview(false)} />}
     </span>
   </NodeViewWrapper>;
@@ -324,7 +327,8 @@ const AttachmentImage = Image.extend({
 
 const isBlankDoc = (doc: ContentNode) => (doc.content ?? []).every(node => node.type === "paragraph" && !(node.content ?? []).length);
 
-function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onUploadState, readOnlyBecauseDeleted, titleHost, modeHost }: { note: NoteDetail; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; onPersistLocal?: () => Promise<void>; onUploadState?: (uploading: boolean) => void; readOnlyBecauseDeleted: boolean; titleHost?: HTMLElement | null; modeHost?: HTMLElement | null }) {
+function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal = onFlush, onUploadState, readOnlyBecauseDeleted, titleHost, modeHost }: { note: NoteDetail; readingUserId?: string | undefined; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; onPersistLocal?: () => Promise<void>; onUploadState?: (uploading: boolean) => void; readOnlyBecauseDeleted: boolean; titleHost?: HTMLElement | null; modeHost?: HTMLElement | null }) {
+  const locale = useLocale();
   const callbacks = useRef({ onChange, onPersistLocal }); callbacks.current = { onChange, onPersistLocal };
   const [initialParts] = useState(() => splitNoteTitle(note.content));
   const [structureIssue, setStructureIssue] = useState(() => {
@@ -421,7 +425,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   ], []);
   const options = useMemo(() => ({
     extensions, content: initialParts.body, immediatelyRender: false, shouldRerenderOnTransaction: false,
-    editorProps: { attributes: { class: "prose-editor", "aria-label": "笔记正文" }, handlePaste: (_view: import("@tiptap/pm/view").EditorView, event: ClipboardEvent, slice: Slice) => pasteHandler.current(event, slice),
+    editorProps: { attributes: { class: "prose-editor", "aria-label": t("笔记正文") }, handlePaste: (_view: import("@tiptap/pm/view").EditorView, event: ClipboardEvent, slice: Slice) => pasteHandler.current(event, slice),
       handleDrop: (view: import("@tiptap/pm/view").EditorView, event: DragEvent, _slice: Slice, moved: boolean) => dropHandler.current(view, event, moved),
       handleDOMEvents: {
         dragover: (view: import("@tiptap/pm/view").EditorView, event: DragEvent) => { if (view.editable && event.dataTransfer?.types.includes("Files")) view.dom.closest(".editor-shell")?.classList.add("file-drop-active"); return false; },
@@ -443,10 +447,16 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     onBlur: () => { void callbacks.current.onPersistLocal(); },
   }), [extensions, initialParts]);
   const editor = useEditor(options);
+  const contentRef = useReadingPosition(readingUserId, note.id, !!editor);
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dom.setAttribute("aria-label", t("笔记正文"));
+    if (!editor.view.composing) editor.view.updateState(editor.state);
+  }, [editor, locale]);
   useEffect(() => {
     if (!editor) return;
     const printing = installPrintImages(editor.view.dom);
-    const print = () => { if (editor.view.dom.closest(".version-panel")) return; void printing.print().catch(() => setEditorError("图片未能全部加载，已取消打印，请检查网络后重试。")); };
+    const print = () => { if (editor.view.dom.closest(".version-panel")) return; void printing.print().catch(() => setEditorError(t("图片未能全部加载，已取消打印，请检查网络后重试。"))); };
     window.addEventListener("uranus-print-note", print);
     return () => { printing.cleanup(); window.removeEventListener("uranus-print-note", print); };
   }, [editor]);
@@ -555,7 +565,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   });
-  if (!editor) return <div className="center-message">正在加载编辑器…</div>;
+  if (!editor) return <div className="center-message">{t("正在加载编辑器…")}</div>;
   const alignmentActive = (value: string) => {
     const selection = editor.state.selection;
     if (selection instanceof CellSelection) { let active = true; selection.forEachCell(node => { if ((node.attrs.textAlign ?? (node.type.name === "tableHeader" ? "center" : "left")) !== value) active = false; }); return active; }
@@ -581,7 +591,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     return found && active;
   };
   const alignmentDisabled = (value: string) => readOnly || (!(editor.state.selection instanceof CellSelection) && !editor.isActive("image") && !editor.can().setTextAlign(value));
-  const alignmentTarget = editor.state.selection instanceof CellSelection ? "所选单元格" : editor.isActive("image") ? "图片" : "段落或标题";
+  const alignmentTarget = editor.state.selection instanceof CellSelection ? t("所选单元格") : editor.isActive("image") ? t("图片") : t("段落或标题");
   const toggleReadOnly = () => {
     if (readOnlyBecauseDeleted) return;
     const next = !readOnly;
@@ -609,7 +619,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     [...state.ranges].sort((a, b) => b.from - a.from).forEach(range => tr.insertText(replaceText, range.from, range.to));
     editor.view.dispatch(tr);
     setFindIndex(0);
-    setEditorNotice(`已替换 ${count} 处`);
+    setEditorNotice(t("已替换 {0} 处", count));
   };
   const exportOriginal = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(note.content, null, 2)], { type: "application/json" }));
@@ -628,7 +638,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       setLinkDialog({ from: range.from, to: range.to, name, href: range.href, error: "" }); setLinkActions(null); return;
     }
     let { from, to, $from, $to } = editor.state.selection;
-    if (!$from.sameParent($to)) { setEditorError("链接只能应用到同一个文本块，请缩小选区。"); return; }
+    if (!$from.sameParent($to)) { setEditorError(t("链接只能应用到同一个文本块，请缩小选区。")); return; }
     const href = editor.getAttributes("link").href as string | undefined;
     if (href) { editor.chain().extendMarkRange("link").run(); ({ from, to } = editor.state.selection); }
     setLinkDialog({ from, to, name: editor.state.doc.textBetween(from, to), href: href ?? "https://", error: "" });
@@ -636,7 +646,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
   const saveLink = () => {
     if (!linkDialog) return;
     const href = linkDialog.href.trim();
-    if (!safeHref(href)) { setLinkDialog({ ...linkDialog, error: "仅允许 http、https 或 mailto 链接" }); return; }
+    if (!safeHref(href)) { setLinkDialog({ ...linkDialog, error: t("仅允许 http、https 或 mailto 链接") }); return; }
     const name = linkDialog.name || href;
     const existing = editor.state.doc.textBetween(linkDialog.from, linkDialog.to);
     if (name === existing && linkDialog.from !== linkDialog.to) editor.chain().focus().setTextSelection({ from: linkDialog.from, to: linkDialog.to }).setLink({ href }).run();
@@ -661,10 +671,10 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     try {
       const attachment = await uploadAttachment(note.id, file);
       if (editor.isDestroyed) return false;
-      if (!editor.isEditable) { setUpload({ file, busy: false, error: "当前为阅读模式，请返回编辑后重试。" }); return false; }
+      if (!editor.isEditable) { setUpload({ file, busy: false, error: t("当前为阅读模式，请返回编辑后重试。") }); return false; }
       const selection = uploadBookmark.current?.resolve(editor.state.doc) ?? editor.state.selection;
       const inserted = attachment.mime.startsWith("image/") ? insertImage(editor, selection, attachment) : insertInlineFile(editor, selection, attachment);
-      if (!inserted) throw new Error("附件已上传但未插入，请检查正文预算后重试。");
+      if (!inserted) throw new Error(t("附件已上传但未插入，请检查正文预算后重试。"));
       uploadBookmark.current = null; setUpload(null); onUploadState?.(false); editor.view.focus();
       return true;
     } catch (error) { if (!editor.isDestroyed) { setUpload({ file, busy: false, error: (error as Error).message }); onUploadState?.(false); } return false; }
@@ -674,8 +684,8 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     const files = Array.from(event.dataTransfer?.files ?? []);
     if (moved || !files.length || !event.dataTransfer?.types.includes("Files")) return false;
     event.preventDefault();
-    if (readOnly) { setEditorNotice("当前为阅读模式，不能上传文件，请先进入编辑模式。"); return true; }
-    if (upload?.busy || dropBusy.current) { setEditorNotice("正在上传，请等当前文件上传完成后再拖入。"); return true; }
+    if (readOnly) { setEditorNotice(t("当前为阅读模式，不能上传文件，请先进入编辑模式。")); return true; }
+    if (upload?.busy || dropBusy.current) { setEditorNotice(t("正在上传，请等当前文件上传完成后再拖入。")); return true; }
     const imageTypes = ["image/png", "image/jpeg", "image/webp", "image/gif"];
     const accepted: File[] = [], rejected: File[] = [];
     for (const original of files) {
@@ -683,7 +693,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       (imageTypes.includes(file.type) || Object.hasOwn(MIME_EXTENSIONS, file.type) ? accepted : rejected).push(file);
     }
     const rejectedNames = rejected.map(file => file.name);
-    const rejectedNotice = rejectedNames.length ? `不支持的文件类型：${rejectedNames.slice(0, 3).join("、")}${rejectedNames.length > 3 ? ` 等 ${rejectedNames.length} 个` : ""}` : "";
+    const rejectedNotice = rejectedNames.length ? t("不支持的文件类型：{0}{1}", rejectedNames.slice(0, 3).join("、"), rejectedNames.length > 3 ? t(" 等 {0} 个", rejectedNames.length) : "") : "";
     if (!accepted.length) { if (rejectedNotice) setEditorNotice(rejectedNotice); return true; }
     const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
     if (at) view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(at.pos))));
@@ -730,8 +740,8 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       const table = externalTable(html);
       if (table) {
         event.preventDefault();
-        if (tableContext(editor)) throw new Error("暂不支持在单元格中嵌套粘贴表格");
-        if (!editor.chain().focus().insertContent(table).run()) throw new Error("表格未能插入，请检查正文大小限制");
+        if (tableContext(editor)) throw new Error(t("暂不支持在单元格中嵌套粘贴表格"));
+        if (!editor.chain().focus().insertContent(table).run()) throw new Error(t("表格未能插入，请检查正文大小限制"));
         return true;
       }
     } catch (error) { event.preventDefault(); setEditorError((error as Error).message); return true; }
@@ -799,7 +809,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
             failedFile = file;
             setUpload({ file, busy: true, error: "" });
             const attachment = await uploadAttachment(note.id, file);
-            if (editor.isDestroyed || !editor.isEditable) throw new Error("笔记已切换或当前不可编辑，图片没有插入正文");
+            if (editor.isDestroyed || !editor.isEditable) throw new Error(t("笔记已切换或当前不可编辑，图片没有插入正文"));
             const selection = uploadBookmark.current?.resolve(editor.state.doc) ?? editor.state.selection;
             insertImage(editor, selection, attachment);
             uploadBookmark.current = editor.state.selection.getBookmark();
@@ -813,7 +823,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
             const selection = uploadBookmark.current?.resolve(editor.state.doc) ?? editor.state.selection;
             editor.view.dispatch(editor.state.tr.setSelection(selection).replaceSelection(next).scrollIntoView());
           }
-          if (hasExternal) setEditorError("外部图片地址不会被自动下载；请保存图片后使用上传或直接粘贴图片文件。");
+          if (hasExternal) setEditorError(t("外部图片地址不会被自动下载；请保存图片后使用上传或直接粘贴图片文件。"));
         }
         uploadBookmark.current = null; retryPaste.current = null; setPasteError(""); onUploadState?.(false); editor.view.focus();
       } catch (error) {
@@ -825,7 +835,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     run();
     return true;
   };
-  const titleField = <span className={`note-title-wrap${titleFocused ? " is-focused" : ""}`}><textarea ref={titleFieldRef} className={`note-header-title${findTitleActive ? " find-title-current" : ""}`} aria-label="笔记标题" placeholder="添加标题" rows={1} value={titleValue} readOnly={readOnly} title={titleValue || "添加标题"}
+  const titleField = <span className={`note-title-wrap${titleFocused ? " is-focused" : ""}`}><textarea ref={titleFieldRef} className={`note-header-title${findTitleActive ? " find-title-current" : ""}`} aria-label={t("笔记标题")} placeholder={t("添加标题")} rows={1} value={titleValue} readOnly={readOnly} title={titleValue || t("添加标题")}
       onChange={event => {
         const value = event.target.value;
         titleNode.current = updateTitle(titleNode.current, value);
@@ -837,10 +847,10 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
       onKeyDown={event => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); editor.commands.focus("start"); }
-      }} /><span className={`note-title-ellipsis${titleValue ? "" : " is-empty"}`} aria-hidden="true">{titleValue || "添加标题"}</span></span>;
+      }} /><span className={`note-title-ellipsis${titleValue ? "" : " is-empty"}`} aria-hidden="true">{titleValue || t("添加标题")}</span></span>;
   const modeControl = readOnlyBecauseDeleted
-    ? <span className="readonly-indicator" role="status" title="最近删除中的笔记不可编辑">只读模式</span>
-    : <button type="button" className={`mode-toggle${readOnly ? " is-readonly" : ""}`} aria-label={readOnly ? "切换到编辑模式" : "切换到只读模式"} title={`${readOnly ? "点击进入编辑" : "点击切换为只读，防止误触"}（Alt+P）`} onClick={toggleReadOnly}><Eye /></button>;
+    ? <span className="readonly-indicator" role="status" title={t("最近删除中的笔记不可编辑")}>{t("只读模式")}</span>
+    : <button type="button" className={`mode-toggle${readOnly ? " is-readonly" : ""}`} aria-label={readOnly ? t("切换到编辑模式") : t("切换到只读模式")} title={t("{0}（Alt+P）", readOnly ? t("点击进入编辑") : t("点击切换为只读，防止误触"))} onClick={toggleReadOnly}><Eye /></button>;
   return <div className={`editor-shell width-${widthMode} font-size-${editorFontSize} ${readOnly ? "readonly" : ""} ${showRowNumbers ? "show-table-row-numbers" : ""}`}>
     <h1 className="print-note-title">{titleValue}</h1>
     {titleHost ? createPortal(titleField, titleHost) : titleField}
@@ -848,88 +858,94 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
     {modeHost ? createPortal(modeControl, modeHost) : !titleHost && modeControl}
     <ReactiveToolbar editor={editor}>{() => {
       const indent = readOnly ? { increase: false, decrease: false } : indentAvailability(editor);
-      return <div className="format-toolbar" aria-label={readOnly ? "阅读工具栏" : "格式工具栏"} onFocusCapture={event => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })}>
-      <Tool label="撤销" disabled={readOnly} onClick={() => editor.chain().focus().undo().run()}><Undo2 /></Tool>
-      <Tool label="重做" disabled={readOnly} onClick={() => editor.chain().focus().redo().run()}><Redo2 /></Tool>
+      return <div className="format-toolbar" aria-label={readOnly ? t("阅读工具栏") : t("格式工具栏")} onFocusCapture={event => {
+        const toolbar = event.currentTarget;
+        const target = event.target.getBoundingClientRect();
+        const bounds = toolbar.getBoundingClientRect();
+        if (target.left < bounds.left) toolbar.scrollLeft += target.left - bounds.left;
+        else if (target.right > bounds.right) toolbar.scrollLeft += target.right - bounds.right;
+      }}>
+      <Tool label={t("撤销")} disabled={readOnly} onClick={() => editor.chain().focus().undo().run()}><Undo2 /></Tool>
+      <Tool label={t("重做")} disabled={readOnly} onClick={() => editor.chain().focus().redo().run()}><Redo2 /></Tool>
       <span className="separator" />
-      <button type="button" className="paragraph-style-trigger" aria-label="段落样式" aria-haspopup="dialog" aria-expanded={Boolean(paragraphPopup)} disabled={readOnly} onMouseDown={event => event.preventDefault()} onClick={event => setParagraphPopup(event.currentTarget)}><span>{paragraphStyle(editor)}</span><ChevronDown /></button>
+      <button type="button" className="paragraph-style-trigger" aria-label={t("段落样式")} aria-haspopup="dialog" aria-expanded={Boolean(paragraphPopup)} disabled={readOnly} onMouseDown={event => event.preventDefault()} onClick={event => setParagraphPopup(event.currentTarget)}><span>{paragraphStyle(editor)}</span><ChevronDown /></button>
       <span className="separator" />
-      <Tool label="加粗" disabled={readOnly} active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></Tool>
-      <Tool label="斜体" disabled={readOnly} active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></Tool>
-      <Tool label="下划线" disabled={readOnly} active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon /></Tool>
-      <Tool label="文本颜色与突出显示" disabled={readOnly || editor.isActive("codeBlock") || editor.isActive("code")} active={Boolean(colorsPopup) || editor.isActive("highlight") || editor.isActive("textColor")} onClick={event => setColorsPopup(event.currentTarget)}><svg className="text-color-tool-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" stroke="var(--line)" strokeWidth="1.2" /><path d="m7.5 17 4.5-11 4.5 11M9.2 13h5.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></Tool>
+      <Tool label={t("加粗")} disabled={readOnly} active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></Tool>
+      <Tool label={t("斜体")} disabled={readOnly} active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></Tool>
+      <Tool label={t("下划线")} disabled={readOnly} active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon /></Tool>
+      <Tool label={t("文本颜色与突出显示")} disabled={readOnly || editor.isActive("codeBlock") || editor.isActive("code")} active={Boolean(colorsPopup) || editor.isActive("highlight") || editor.isActive("textColor")} onClick={event => setColorsPopup(event.currentTarget)}><svg className="text-color-tool-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" stroke="var(--line)" strokeWidth="1.2" /><path d="m7.5 17 4.5-11 4.5 11M9.2 13h5.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></Tool>
       <span className="separator" />
-      <Tool label="靠左对齐" hint={alignmentTarget} disabled={alignmentDisabled("left")} active={alignmentActive("left")} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
-      <Tool label="居中对齐" hint={alignmentTarget} disabled={alignmentDisabled("center")} active={alignmentActive("center")} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
-      <Tool label="靠右对齐" hint={alignmentTarget} disabled={alignmentDisabled("right")} active={alignmentActive("right")} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
+      <Tool label={t("靠左对齐")} hint={alignmentTarget} disabled={alignmentDisabled("left")} active={alignmentActive("left")} onClick={() => alignText(editor, "left")}><AlignLeft /></Tool>
+      <Tool label={t("居中对齐")} hint={alignmentTarget} disabled={alignmentDisabled("center")} active={alignmentActive("center")} onClick={() => alignText(editor, "center")}><AlignCenter /></Tool>
+      <Tool label={t("靠右对齐")} hint={alignmentTarget} disabled={alignmentDisabled("right")} active={alignmentActive("right")} onClick={() => alignText(editor, "right")}><AlignRight /></Tool>
       <span className="separator" />
-      <Tool label="无序列表" disabled={readOnly} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
-      <Tool label="有序列表" disabled={readOnly} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>
-      <Tool label="待办" disabled={readOnly} active={editor.isActive("taskList")} onClick={() => editor.chain().focus().toggleTaskList().run()}><CheckSquare /></Tool>
+      <Tool label={t("无序列表")} disabled={readOnly} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
+      <Tool label={t("有序列表")} disabled={readOnly} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>
+      <Tool label={t("待办")} disabled={readOnly} active={editor.isActive("taskList")} onClick={() => editor.chain().focus().toggleTaskList().run()}><CheckSquare /></Tool>
       <span className="separator" />
-      <Tool label="链接" disabled={readOnly} active={editor.isActive("link")} onClick={() => openLinkDialog()}><Link2 /></Tool>
-      <Tool label="表格" hint={tableContext(editor) ? "暂不支持嵌套表格" : "插入表格"} disabled={readOnly || !!tableContext(editor)} onClick={() => setTablePicker(v => v ? null : { anchor: editor.view.dom.closest(".editor-shell")!.querySelector<HTMLElement>('[aria-label="表格"]')! })}><Table2 /></Tool>
-      <label className={`file-tool ${readOnly || upload?.busy ? "disabled" : ""}`} title="上传图片" aria-label="上传图片"><ImagePlus /><input type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" disabled={readOnly || upload?.busy} onChange={async (event) => {
+      <Tool label={t("链接")} disabled={readOnly} active={editor.isActive("link")} onClick={() => openLinkDialog()}><Link2 /></Tool>
+      <Tool label={t("表格")} hint={tableContext(editor) ? t("暂不支持嵌套表格") : t("插入表格")} disabled={readOnly || !!tableContext(editor)} onClick={event => { const anchor = event.currentTarget; setTablePicker(v => v ? null : { anchor }); }}><Table2 /></Tool>
+      <label className={`file-tool ${readOnly || upload?.busy ? "disabled" : ""}`} title={t("上传图片")} aria-label={t("上传图片")}><ImagePlus /><input type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" disabled={readOnly || upload?.busy} onChange={async (event) => {
         const files = Array.from(event.target.files ?? []);
         event.target.value = "";
         for (const file of files) if (!await uploadImage(file, false)) break;
       }} /></label>
-      <button type="button" aria-label="更多格式与插入" title="更多格式与插入" aria-haspopup="dialog" aria-expanded={Boolean(morePopup)} disabled={readOnly} className={morePopup ? "active" : ""} onMouseDown={event => event.preventDefault()} onClick={event => setMorePopup(morePopup ? null : event.currentTarget)}><Plus /></button>
-      {morePopup && !readOnly && <Popup anchor={morePopup} title="更多格式与插入" className="toolbar-more-popup" close={() => setMorePopup(null)}>
+      <button type="button" aria-label={t("更多格式与插入")} title={t("更多格式与插入")} aria-haspopup="dialog" aria-expanded={Boolean(morePopup)} disabled={readOnly} className={morePopup ? "active" : ""} onMouseDown={event => event.preventDefault()} onClick={event => setMorePopup(morePopup ? null : event.currentTarget)}><Plus /></button>
+      {morePopup && !readOnly && <Popup anchor={morePopup} title={t("更多格式与插入")} className="toolbar-more-popup" close={() => setMorePopup(null)}>
         <div className="toolbar-more-actions" onClick={event => {
           const button = (event.target as HTMLElement).closest("button:not(:disabled)");
           // Indent changes are often repeated, so those two keep the menu open.
-          if (button && !["增加缩进", "减少缩进"].includes(button.getAttribute("aria-label") ?? "")) setMorePopup(null);
+          if (button && ![t("增加缩进"), t("减少缩进")].includes(button.getAttribute("aria-label") ?? "")) setMorePopup(null);
         }}>
-          <p className="toolbar-menu-heading">文字格式</p>
-      <Tool showLabel label="删除线" disabled={readOnly} active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
-      <Tool showLabel label="行内代码" disabled={readOnly} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
-      <Tool showLabel label="代码块" disabled={readOnly || !editor.can().toggleCodeBlock()} active={editor.isActive("codeBlock")} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Braces /></Tool>
-          <p className="toolbar-menu-heading">段落与列表</p>
-      <Tool showLabel label="增加缩进" hint="列表项嵌套一级；段落和标题增加缩进（最多 6 级）" disabled={!indent.increase} onClick={() => changeIndent(editor, 1)}><IndentIncrease /></Tool>
-      <Tool showLabel label="减少缩进" hint="列表项提升一级（最外层退出列表）；段落和标题减少缩进" disabled={!indent.decrease} onClick={() => changeIndent(editor, -1)}><IndentDecrease /></Tool>
-      <Tool showLabel label="引用" disabled={readOnly} active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote /></Tool>
-          <p className="toolbar-menu-heading">插入</p>
-      <Tool showLabel label="分隔线" disabled={readOnly} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus /></Tool>
-      <Tool showLabel label="插入标签" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => setLabelPopup({ anchor: editor.view.coordsAtPos(editor.state.selection.from) })}><Tag /></Tool>
-      <Tool showLabel label="插入笔记链接" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => setNoteLinkPopup(editor.view.coordsAtPos(editor.state.selection.from))}><FileSymlink /></Tool>
-      <Tool showLabel label="插入日期" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => { const d = new Date(); editor.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`).run(); }}><CalendarDays /></Tool>
-      <Tool showLabel label="插入日期时间" disabled={readOnly || editor.isActive("codeBlock")} onClick={() => { const d = new Date(); editor.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`).run(); }}><Clock /></Tool>
-      <label className={`toolbar-file-action ${readOnly || upload?.busy ? "disabled" : ""}`} title="上传文件附件" aria-label="上传文件附件"><Paperclip /><span>上传文件附件</span><input type="file" accept={fileAccept} disabled={readOnly || upload?.busy} onChange={async event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) { setMorePopup(null); await uploadImage(fileWithMime(file)); } }} /></label>
+          <p className="toolbar-menu-heading">{t("文字格式")}</p>
+      <Tool showLabel label={t("删除线")} disabled={readOnly} active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
+      <Tool showLabel label={t("行内代码")} disabled={readOnly} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
+      <Tool showLabel label={t("代码块")} disabled={readOnly || !editor.can().toggleCodeBlock()} active={editor.isActive("codeBlock")} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Braces /></Tool>
+          <p className="toolbar-menu-heading">{t("段落与列表")}</p>
+      <Tool showLabel label={t("增加缩进")} hint={t("列表项嵌套一级；段落和标题增加缩进（最多 6 级）")} disabled={!indent.increase} onClick={() => changeIndent(editor, 1)}><IndentIncrease /></Tool>
+      <Tool showLabel label={t("减少缩进")} hint={t("列表项提升一级（最外层退出列表）；段落和标题减少缩进")} disabled={!indent.decrease} onClick={() => changeIndent(editor, -1)}><IndentDecrease /></Tool>
+      <Tool showLabel label={t("引用")} disabled={readOnly} active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote /></Tool>
+          <p className="toolbar-menu-heading">{t("插入")}</p>
+      <Tool showLabel label={t("分隔线")} disabled={readOnly} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus /></Tool>
+      <Tool showLabel label={t("插入标签")} disabled={readOnly || editor.isActive("codeBlock")} onClick={() => setLabelPopup({ anchor: editor.view.coordsAtPos(editor.state.selection.from) })}><Tag /></Tool>
+      <Tool showLabel label={t("插入笔记链接")} disabled={readOnly || editor.isActive("codeBlock")} onClick={() => setNoteLinkPopup(editor.view.coordsAtPos(editor.state.selection.from))}><FileSymlink /></Tool>
+      <Tool showLabel label={t("插入日期")} disabled={readOnly || editor.isActive("codeBlock")} onClick={() => { const d = new Date(); editor.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`).run(); }}><CalendarDays /></Tool>
+      <Tool showLabel label={t("插入日期时间")} disabled={readOnly || editor.isActive("codeBlock")} onClick={() => { const d = new Date(); editor.chain().focus().insertContent(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`).run(); }}><Clock /></Tool>
+      <label className={`toolbar-file-action ${readOnly || upload?.busy ? "disabled" : ""}`} title={t("上传文件附件")} aria-label={t("上传文件附件")}><Paperclip /><span>{t("上传文件附件")}</span><input type="file" accept={fileAccept} disabled={readOnly || upload?.busy} onChange={async event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) { setMorePopup(null); await uploadImage(fileWithMime(file)); } }} /></label>
         </div>
       </Popup>}
-      {readOnly && <Tool label="在笔记中查找" onClick={() => setFindOpen(true)}><Search /></Tool>}
+      {readOnly && <Tool label={t("在笔记中查找")} onClick={() => setFindOpen(true)}><Search /></Tool>}
       <span className="spacer" />
-      <Tool label="笔记大纲" disabled={headings(editor).length === 0} onClick={() => { const button = editor.view.dom.closest(".editor-shell")!.querySelector<HTMLElement>('[aria-label="笔记大纲"]')!, rect = button.getBoundingClientRect(); setOutline(pointAnchor(button, rect.left, rect.bottom)); }}><ListTree /></Tool>
-      <Tool label={widthMode === "fluid" ? "切换舒适阅读" : "切换自适应宽版"} active={widthMode === "reading"} onClick={() => setWidthMode(widthMode === "fluid" ? "reading" : "fluid")}><MoveHorizontal /></Tool>
+      <Tool label={t("笔记大纲")} disabled={headings(editor).length === 0} onClick={event => { const button = event.currentTarget, rect = button.getBoundingClientRect(); setOutline(pointAnchor(button, rect.left, rect.bottom)); }}><ListTree /></Tool>
+      <Tool label={widthMode === "fluid" ? t("切换舒适阅读") : t("切换自适应宽版")} active={widthMode === "reading"} onClick={() => setWidthMode(widthMode === "fluid" ? "reading" : "fluid")}><MoveHorizontal /></Tool>
     </div>; }}</ReactiveToolbar>
     {editorError && <div className="error-banner" role="alert">{editorError}</div>}
-    {editorNotice && <div className={`editor-notice${editorNoticeClosing ? " is-leaving" : ""}`} role="status">{editorNotice}<button aria-label="关闭提示" onClick={() => { setEditorNoticeClosing(true); window.setTimeout(() => setEditorNotice(""), 160); }}>×</button></div>}
-    {structureIssue && <div className="draft-banner structure-warning" role="alert"><span>检测到原始正文结构异常：{structureIssue.message}。服务器原文尚未改写。</span><button onClick={exportOriginal}>导出原始 JSON</button>{structureIssue.repair && <details><summary>预览修复</summary><pre>{JSON.stringify(structureIssue.repair.content, null, 2).slice(0, 10_000)}{JSON.stringify(structureIssue.repair.content).length > 10_000 ? "\n…预览已截断" : ""}</pre><button disabled={readOnly} onClick={applyStructureRepair}>补齐 {structureIssue.repair.added} 个空单元格并应用</button></details>}</div>}
-    {upload && <div className="draft-banner" role="status"><span>{upload.busy ? "正在上传附件：" : "附件上传未完成："}{upload.file.name}{upload.error && " · " + upload.error}</span>{!upload.busy && <><button disabled={readOnly} onClick={() => void uploadImage(upload.file, true)}>重试上传</button><button onClick={() => { uploadBookmark.current = null; setUpload(null); }}>取消上传</button></>}</div>}
-    {pasteError && <div className="draft-banner" role="alert"><span>图片粘贴未完成：{pasteError}</span><button disabled={readOnly} onClick={() => retryPaste.current?.()}>重试粘贴</button><button onClick={() => { retryPaste.current = null; uploadBookmark.current = null; setPasteError(""); }}>取消</button></div>}
+    {editorNotice && <div className={`editor-notice${editorNoticeClosing ? " is-leaving" : ""}`} role="status">{editorNotice}<button aria-label={t("关闭提示")} onClick={() => { setEditorNoticeClosing(true); window.setTimeout(() => setEditorNotice(""), 160); }}>×</button></div>}
+    {structureIssue && <div className="draft-banner structure-warning" role="alert"><span>{t("检测到原始正文结构异常：")}{structureIssue.message}{t("。服务器原文尚未改写。")}</span><button onClick={exportOriginal}>{t("导出原始 JSON")}</button>{structureIssue.repair && <details><summary>{t("预览修复")}</summary><pre>{JSON.stringify(structureIssue.repair.content, null, 2).slice(0, 10_000)}{JSON.stringify(structureIssue.repair.content).length > 10_000 ? "\n" + t("…预览已截断") : ""}</pre><button disabled={readOnly} onClick={applyStructureRepair}>{t("补齐")} {structureIssue.repair.added} {t("个空单元格并应用")}</button></details>}</div>}
+    {upload && <div className="draft-banner" role="status"><span>{upload.busy ? t("正在上传附件：") : t("附件上传未完成：")}{upload.file.name}{upload.error && " · " + upload.error}</span>{!upload.busy && <><button disabled={readOnly} onClick={() => void uploadImage(upload.file, true)}>{t("重试上传")}</button><button onClick={() => { uploadBookmark.current = null; setUpload(null); }}>{t("取消上传")}</button></>}</div>}
+    {pasteError && <div className="draft-banner" role="alert"><span>{t("图片粘贴未完成：")}{pasteError}</span><button disabled={readOnly} onClick={() => retryPaste.current?.()}>{t("重试粘贴")}</button><button onClick={() => { retryPaste.current = null; uploadBookmark.current = null; setPasteError(""); }}>{t("取消")}</button></div>}
     {tablePicker && !readOnly && <TablePicker editor={editor} anchor={tablePicker.anchor} range={tablePicker.range} close={() => setTablePicker(null)} />}
     {labelPopup && !readOnly && <LabelPopup editor={editor} {...labelPopup} close={() => setLabelPopup(null)} />}
     {colorsPopup && !readOnly && <TextColorsPopup editor={editor} anchor={colorsPopup} close={() => setColorsPopup(null)} />}
     {paragraphPopup && !readOnly && <ParagraphStyles editor={editor} anchor={paragraphPopup} close={() => setParagraphPopup(null)} />}
     {outline && <OutlinePopup editor={editor} anchor={outline} close={() => setOutline(null)} />}
     {noteLinkPopup && !readOnly && <NoteLinkPopup editor={editor} anchor={noteLinkPopup} close={() => setNoteLinkPopup(null)} />}
-    {codeLanguagePopup && !readOnly && <Popup anchor={codeLanguagePopup.anchor} title="选择代码语言" close={() => setCodeLanguagePopup(null)} restoreFocus={() => editor.view.focus()}>
+    {codeLanguagePopup && !readOnly && <Popup anchor={codeLanguagePopup.anchor} title={t("选择代码语言")} close={() => setCodeLanguagePopup(null)} restoreFocus={() => editor.view.focus()}>
       {CODE_LANGUAGES.map(option => <button key={option.id} onClick={() => {
         const node = editor.state.doc.nodeAt(codeLanguagePopup.pos);
         if (node?.type.name === "codeBlock") editor.view.dispatch(editor.state.tr.setNodeMarkup(codeLanguagePopup.pos, undefined, { ...node.attrs, language: option.id === "text" ? null : option.id }));
         setCodeLanguagePopup(null); editor.view.focus();
-      }}>{option.label}</button>)}
+      }}>{t(option.label)}</button>)}
     </Popup>}
     <TableTools editor={editor} readOnly={readOnly} showRowNumbers={showRowNumbers} onShowRowNumbers={(value) => { setShowRowNumbers(value); writePreference("uranus.table.rowNumbers", value ? "1" : "0"); }} />
-    {findOpen && <div className="find-bar"><input autoFocus placeholder="在笔记中查找" value={find} onChange={(event) => { setFind(event.target.value); setFindIndex(0); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && matches) { event.preventDefault(); setFindIndex((value) => event.shiftKey ? value - 1 : value + 1); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} />{!readOnly && <><input placeholder="替换为" value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); replaceCurrent(); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} /><button disabled={!find || !matches || findTitleActive} title={findTitleActive ? "标题中的匹配不支持替换" : undefined} onClick={replaceCurrent}>替换</button><button disabled={!find || !findBodyCount} onClick={replaceAll}>全部替换</button></>}<span>{findTitleActive ? "标题 · " : ""}{find ? matches ? `${(findIndex % matches + matches) % matches + 1}/${matches}` : "0/0" : "0/0"}</span><button aria-label="上一个匹配" disabled={!matches} onClick={() => setFindIndex(value => value - 1)}>↑</button><button aria-label="下一个匹配" disabled={!matches} onClick={() => setFindIndex(value => value + 1)}>↓</button><button onClick={() => { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); }}>完成</button></div>}
-    {linkActions && <Popup className="link-actions-popup" anchor={linkActions.anchor} title="链接操作" close={() => setLinkActions(null)} restoreFocus={() => editor.view.focus()}>
-      <button onClick={() => { const opened = window.open(linkActions.href, "_blank", "noopener,noreferrer"); if (opened) opened.opener = null; }}><ExternalLink aria-hidden="true" /><span>打开链接</span></button>
-      <button onClick={() => openLinkDialog(linkActions)}><Pencil aria-hidden="true" /><span>编辑链接</span></button>
-      <button className="link-actions-remove" onClick={() => removeLink(linkActions)}><Unlink aria-hidden="true" /><span>移除链接</span></button>
+    {findOpen && <div className="find-bar"><input autoFocus placeholder={t("在笔记中查找")} value={find} onChange={(event) => { setFind(event.target.value); setFindIndex(0); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && matches) { event.preventDefault(); setFindIndex((value) => event.shiftKey ? value - 1 : value + 1); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} />{!readOnly && <><input placeholder={t("替换为")} value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); replaceCurrent(); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} /><button disabled={!find || !matches || findTitleActive} title={findTitleActive ? t("标题中的匹配不支持替换") : undefined} onClick={replaceCurrent}>{t("替换")}</button><button disabled={!find || !findBodyCount} onClick={replaceAll}>{t("全部替换")}</button></>}<span>{findTitleActive ? t("标题 ·") + " " : ""}{find ? matches ? `${(findIndex % matches + matches) % matches + 1}/${matches}` : "0/0" : "0/0"}</span><button aria-label={t("上一个匹配")} disabled={!matches} onClick={() => setFindIndex(value => value - 1)}>↑</button><button aria-label={t("下一个匹配")} disabled={!matches} onClick={() => setFindIndex(value => value + 1)}>↓</button><button onClick={() => { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); }}>{t("完成")}</button></div>}
+    {linkActions && <Popup className="link-actions-popup" anchor={linkActions.anchor} title={t("链接操作")} close={() => setLinkActions(null)} restoreFocus={() => editor.view.focus()}>
+      <button onClick={() => { const opened = window.open(linkActions.href, "_blank", "noopener,noreferrer"); if (opened) opened.opener = null; }}><ExternalLink aria-hidden="true" /><span>{t("打开链接")}</span></button>
+      <button onClick={() => openLinkDialog(linkActions)}><Pencil aria-hidden="true" /><span>{t("编辑链接")}</span></button>
+      <button className="link-actions-remove" onClick={() => removeLink(linkActions)}><Unlink aria-hidden="true" /><span>{t("移除链接")}</span></button>
     </Popup>}
-    {linkDialog && <div className="link-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setLinkDialog(null); }}><form className="link-dialog" role="dialog" aria-modal="true" aria-labelledby="link-dialog-title" onSubmit={(event) => { event.preventDefault(); saveLink(); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setLinkDialog(null); editor.view.focus(); } }}><h2 id="link-dialog-title">{linkDialog.from === linkDialog.to ? "插入链接" : "编辑链接"}</h2><label>显示名称<input autoFocus value={linkDialog.name} onChange={event => setLinkDialog({ ...linkDialog, name: event.target.value })} /></label><label>链接地址<input value={linkDialog.href} aria-invalid={Boolean(linkDialog.error)} onChange={event => setLinkDialog({ ...linkDialog, href: event.target.value, error: "" })} /></label>{linkDialog.error && <p role="alert">{linkDialog.error}</p>}<div><button type="button" onClick={() => { setLinkDialog(null); editor.view.focus(); }}>取消</button>{linkDialog.from !== linkDialog.to && <button type="button" onClick={() => removeLink()}>移除链接</button>}<button className="primary" type="submit">{linkDialog.from === linkDialog.to ? "插入" : "保存"}</button></div></form></div>}
-    <EditorContent className="editor-content" editor={editor} onClick={(event) => {
+    {linkDialog && <div className="link-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setLinkDialog(null); }}><form className="link-dialog" role="dialog" aria-modal="true" aria-labelledby="link-dialog-title" onSubmit={(event) => { event.preventDefault(); saveLink(); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setLinkDialog(null); editor.view.focus(); } }}><h2 id="link-dialog-title">{linkDialog.from === linkDialog.to ? t("插入链接") : t("编辑链接")}</h2><label>{t("显示名称")}<input autoFocus value={linkDialog.name} onChange={event => setLinkDialog({ ...linkDialog, name: event.target.value })} /></label><label>{t("链接地址")}<input value={linkDialog.href} aria-invalid={Boolean(linkDialog.error)} onChange={event => setLinkDialog({ ...linkDialog, href: event.target.value, error: "" })} /></label>{linkDialog.error && <p role="alert">{linkDialog.error}</p>}<div><button type="button" onClick={() => { setLinkDialog(null); editor.view.focus(); }}>{t("取消")}</button>{linkDialog.from !== linkDialog.to && <button type="button" onClick={() => removeLink()}>{t("移除链接")}</button>}<button className="primary" type="submit">{linkDialog.from === linkDialog.to ? t("插入") : t("保存")}</button></div></form></div>}
+    <EditorContent ref={contentRef} className="editor-content" editor={editor} onClick={(event) => {
       if (event.target === event.currentTarget && !readOnly) editor.commands.focus("end");
     }} />
   </div>;
@@ -937,7 +953,7 @@ function NoteEditorView({ note, onChange, onFlush, onPersistLocal = onFlush, onU
 
 // The editor owns its document until an explicit epoch remount (restore/conflict).
 // Saved query snapshots must not replace live composing DOM or callback options.
-export const NoteEditor = memo(NoteEditorView, (a, b) => a.note.id === b.note.id && a.titleHost === b.titleHost && a.modeHost === b.modeHost && a.readOnlyBecauseDeleted === b.readOnlyBecauseDeleted);
+export const NoteEditor = memo(NoteEditorView, (a, b) => a.note.id === b.note.id && a.readingUserId === b.readingUserId && a.titleHost === b.titleHost && a.modeHost === b.modeHost && a.readOnlyBecauseDeleted === b.readOnlyBecauseDeleted);
 
 function ReactiveToolbar({ editor, children }: { editor: Editor; children: () => React.ReactNode }) {
   const subscribe = useMemo(() => (listener: () => void) => { editor.on("transaction", listener); return () => { editor.off("transaction", listener); }; }, [editor]);
@@ -946,5 +962,6 @@ function ReactiveToolbar({ editor, children }: { editor: Editor; children: () =>
 }
 
 function Tool({ label, hint, active, disabled, onClick, children, showLabel }: { label: string; showLabel?: boolean; hint?: string; active?: boolean; disabled?: boolean; onClick: React.MouseEventHandler<HTMLButtonElement>; children: React.ReactNode }) {
+  useLocale();
   return <button type="button" title={hint ? label + " · " + hint : label} aria-label={label} aria-description={hint} aria-pressed={active} className={active ? "active" : ""} disabled={disabled} onMouseDown={(event) => { event.preventDefault(); }} onClick={onClick}>{children}{showLabel && <span>{label}</span>}</button>;
 }

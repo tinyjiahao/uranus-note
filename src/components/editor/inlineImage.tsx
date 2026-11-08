@@ -1,3 +1,4 @@
+import { t, useLocale } from "../../state/locale";
 import { Node, type Editor } from "@tiptap/core";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { closeHistory } from "@tiptap/pm/history";
@@ -12,6 +13,7 @@ import type { AttachmentDto } from "../../api/client";
 const validWidth = (value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= INLINE_IMAGE_MIN_WIDTH && value <= INLINE_IMAGE_MAX_WIDTH ? value : null;
 
 function InlineImageView({ node, editor, getPos, selected, updateAttributes }: NodeViewProps) {
+  useLocale();
   const [preview, setPreview] = useState(false);
   const [width, setWidth] = useState<number | null>(validWidth(node.attrs.width));
   const drag = useRef<{ startX: number; startWidth: number; latest: number } | undefined>(undefined);
@@ -27,10 +29,10 @@ function InlineImageView({ node, editor, getPos, selected, updateAttributes }: N
   return <NodeViewWrapper as="span" className={`inline-image${selected ? " image-selected" : ""}`} onContextMenu={(event: React.MouseEvent) => {
     if (!editor.isEditable) return; event.preventDefault(); event.stopPropagation(); openMenu(pointAnchor(event.currentTarget as HTMLElement, event.clientX, event.clientY));
   }}>
-    {editor.isEditable && <span className="inline-drag-handle" data-drag-handle="" contentEditable={false} aria-hidden="true" title="拖动调整位置" />}
-    <img data-drag-handle="" draggable={false} loading="lazy" decoding="async" src={String(node.attrs.src)} data-attachment-id={String(node.attrs.attachmentId ?? "")} alt={String(node.attrs.alt ?? "")} style={width ? { width, height: "auto" } : undefined} title="双击放大图片" onClick={select}
+    {editor.isEditable && <span className="inline-drag-handle" data-drag-handle="" contentEditable={false} aria-hidden="true" title={t("拖动调整位置")} />}
+    <img data-drag-handle="" draggable={false} loading="lazy" decoding="async" src={String(node.attrs.src)} data-attachment-id={String(node.attrs.attachmentId ?? "")} alt={String(node.attrs.alt ?? "")} style={width ? { width, height: "auto" } : undefined} title={t("双击放大图片")} onClick={select}
       onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); setPreview(true); }} />
-    {editor.isEditable && <button className="image-resize-handle" aria-label="调整图片宽度" onPointerDown={event => {
+    {editor.isEditable && <button className="image-resize-handle" aria-label={t("调整图片宽度")} onPointerDown={event => {
       event.preventDefault(); event.stopPropagation();
       const image = event.currentTarget.previousElementSibling as HTMLImageElement;
       const startWidth = image.getBoundingClientRect().width;
@@ -157,23 +159,32 @@ export function copySelectedImage(editor: Editor) {
   if (!(selection instanceof NodeSelection) || !["image", "inlineImage"].includes(selection.node.type.name)) return;
   const node = selection.node, src = String(node.attrs.src ?? "");
   const notify = (name: string, detail: string) => window.dispatchEvent(new CustomEvent(name, { detail }));
-  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { notify("uranus-editor-error", "当前浏览器不支持复制图片，请使用快捷键复制或保存后再上传。"); return; }
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { notify("uranus-editor-error", t("当前浏览器不支持复制图片，请使用快捷键复制或保存后再上传。")); return; }
   const element = document.createElement("img");
   element.setAttribute("src", src); element.setAttribute("alt", String(node.attrs.alt ?? "")); element.setAttribute("data-attachment-id", String(node.attrs.attachmentId ?? ""));
   if (node.type.name === "inlineImage") element.setAttribute("data-inline-image", "");
   if (validWidth(node.attrs.width)) element.setAttribute("width", String(node.attrs.width));
   if (node.attrs.imageAlign) element.setAttribute("data-image-align", String(node.attrs.imageAlign));
+  void copyImageToClipboard(src, element.outerHTML)
+    .then(() => notify("uranus-editor-notice", t("图片已复制")))
+    .catch(error => notify("uranus-editor-error", t("复制图片失败：{0}", (error as Error).message || t("浏览器拒绝访问剪贴板"))));
+}
+
+export async function copyImageToClipboard(src: string, html?: string) {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error(t("当前浏览器不支持复制图片"));
   const png = (async () => {
     const response = await fetch(src, { credentials: "same-origin" });
-    if (!response.ok) throw new Error("图片读取失败");
+    if (!response.ok) throw new Error(t("图片读取失败"));
     const blob = await response.blob();
     if (blob.type === "image/png") return blob;
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement("canvas"); canvas.width = bitmap.width; canvas.height = bitmap.height;
     canvas.getContext("2d")!.drawImage(bitmap, 0, 0); bitmap.close();
-    return await new Promise<Blob>((resolve, reject) => canvas.toBlob(result => result ? resolve(result) : reject(new Error("图片转换失败")), "image/png"));
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob(result => result ? resolve(result) : reject(new Error(t("图片转换失败"))), "image/png"));
   })();
-  navigator.clipboard.write([new ClipboardItem({ "image/png": png, "text/html": new Blob([element.outerHTML], { type: "text/html" }) })])
-    .then(() => notify("uranus-editor-notice", "图片已复制"))
-    .catch(error => notify("uranus-editor-error", `复制图片失败：${(error as Error).message || "浏览器拒绝访问剪贴板"}`));
+  // Pass a promise into ClipboardItem so write runs inside the tap gesture.
+  await navigator.clipboard.write([new ClipboardItem({
+    "image/png": png,
+    ...(html ? { "text/html": new Blob([html], { type: "text/html" }) } : {}),
+  })]);
 }

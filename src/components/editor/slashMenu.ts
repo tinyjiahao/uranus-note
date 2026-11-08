@@ -1,3 +1,4 @@
+import { t } from "../../state/locale";
 import { Extension, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
@@ -17,7 +18,7 @@ export const SLASH_ITEMS: SlashItem[] = [];
 
 function match(query: string, item: SlashItem): boolean {
   const q = query.toLowerCase();
-  return !q || item.label.toLowerCase().includes(q) || item.keywords.includes(q) || item.id.includes(q);
+  return !q || item.label.toLowerCase().includes(q) || t(item.label).toLowerCase().includes(q) || item.keywords.includes(q) || item.id.includes(q);
 }
 
 export const SlashMenu = Extension.create<{ items: SlashItem[] }>({
@@ -86,7 +87,7 @@ export const SlashMenu = Extension.create<{ items: SlashItem[] }>({
             const items = filtered(view, menuItems);
             const menu = document.createElement("div");
             menu.className = "slash-menu"; menu.contentEditable = "false";
-            menu.setAttribute("role", "dialog"); menu.setAttribute("aria-label", "斜杠命令");
+            menu.setAttribute("role", "dialog"); menu.setAttribute("aria-label", t("斜杠命令"));
             // Anchor to the slash character, not the widget's own boundary.
             // On redraw coordsAtPos at that boundary can measure the previous
             // fixed-position menu instead of the text caret.
@@ -95,13 +96,13 @@ export const SlashMenu = Extension.create<{ items: SlashItem[] }>({
               menu.style.left = `${Math.max(8, Math.min(coords.left, innerWidth - 200))}px`;
               menu.style.top = `${coords.bottom + 4}px`;
             }
-            if (!items.length) { const empty = document.createElement("div"); empty.className = "slash-item slash-empty"; empty.textContent = "无匹配命令"; menu.appendChild(empty); return menu; }
+            if (!items.length) { const empty = document.createElement("div"); empty.className = "slash-item slash-empty"; empty.textContent = t("无匹配命令"); menu.appendChild(empty); return menu; }
             const activeIndex = Math.min(slashKey.getState(view.state)?.index ?? 0, items.length - 1);
             items.forEach((item, index) => {
               const row = document.createElement("button");
               row.type = "button";
               row.className = `slash-item${index === activeIndex ? " active" : ""}`;
-              row.textContent = item.label;
+              row.textContent = t(item.label);
               row.onmousedown = event => event.preventDefault();
               row.onclick = () => {
                 const st = slashKey.getState(view.state); if (!st) return;

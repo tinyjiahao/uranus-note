@@ -1,3 +1,4 @@
+import { t } from "../../state/locale";
 import { Extension } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
 import { NodeSelection, Plugin } from "@tiptap/pm/state";
@@ -105,8 +106,8 @@ export const BlockDrag = Extension.create({
               wrapper.contentEditable = "false";
               const handle = document.createElement("button");
               handle.type = "button"; handle.className = "block-drag-handle";
-              handle.setAttribute("aria-label", `拖动${names[node.type.name] ?? "内容块"}`);
-              handle.title = "拖动调整顺序；聚焦后按 Alt + ↑ / ↓ 移动";
+              handle.setAttribute("aria-label", t("拖动{0}", t(names[node.type.name] ?? "内容块")));
+              handle.title = t("拖动调整顺序；聚焦后按 Alt + ↑ / ↓ 移动");
               handle.onpointerdown = event => {
                 if (event.button !== 0 || !view.editable || view.composing) return;
                 const from = getPos(); if (typeof from !== "number") return;

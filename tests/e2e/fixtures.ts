@@ -29,7 +29,7 @@ export const test = base.extend({
             retriedLogin = true;
             testInfo.setTimeout(testInfo.timeout + (seconds + 5) * 1000);
             retryTimer = setTimeout(() => {
-              if (!page.isClosed()) void page.getByRole("button", { name: "登录", exact: true }).click().catch(() => { /* The test's workspace assertion reports a failed retry. */ });
+              if (!page.isClosed()) void page.getByRole("button", { name: /^(登录|Sign in)$/ }).click().catch(() => { /* The test's workspace assertion reports a failed retry. */ });
             }, (seconds + 1) * 1000);
           }
         }

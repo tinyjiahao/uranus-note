@@ -1,3 +1,4 @@
+import { t, useLocale } from "../state/locale";
 import { useLayoutEffect, useRef, useState, type ReactNode, type ClipboardEventHandler } from "react";
 import { createPortal } from "react-dom";
 
@@ -19,6 +20,7 @@ export function Popup({ anchor, title, hideTitle = false, close, children, back,
   /** Element whose rectangle is used for placement while `anchor` keeps focus/outside-click semantics (e.g. the whole card instead of its inner button). */
   positionAnchor?: HTMLElement | null;
 }) {
+  useLocale();
   const root = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef(close); closeRef.current = close;
@@ -106,7 +108,7 @@ export function Popup({ anchor, title, hideTitle = false, close, children, back,
     if (event.key === "ArrowLeft" && back) { event.preventDefault(); back(); }
     if (event.key === "ArrowRight" && target.getAttribute("aria-haspopup") === "true") { event.preventDefault(); target.click(); }
   }}>
-    <header>{back && <button aria-label="返回上一级" onClick={back}>‹</button>}<strong>{hideTitle ? "" : title}</strong><button aria-label="关闭菜单" onClick={() => { close(); focusTrigger(); }}>×</button></header>
+    <header>{back && <button aria-label={t("返回上一级")} onClick={back}>‹</button>}<strong>{hideTitle ? "" : title}</strong><button aria-label={t("关闭菜单")} onClick={() => { close(); focusTrigger(); }}>×</button></header>
     <div className="object-popup-content">{children}</div>
   </div></>, anchor instanceof HTMLElement ? anchor.closest("dialog") ?? document.body : document.body);
 }

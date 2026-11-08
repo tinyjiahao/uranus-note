@@ -6,6 +6,7 @@ import { changeDeletedState, createManualVersion, createNote, getNote, getVersio
 import type { Env, AppVariables } from "../types";
 import { getNoteStats } from "../services/noteStats";
 import { queueEmptyTrash, queueHardDelete } from "../services/maintenance";
+import { RECENT_NOTE_LIMIT } from "../../shared/recentNotes";
 
 export const noteRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 const idOf = (value: string, label = "笔记") => {
@@ -17,8 +18,12 @@ const revisionOperationSchema = z.object({ operation_id: z.string().uuid(), expe
 
 noteRoutes.get("/", async (c) => {
   const query = c.req.query();
+  if (query.ids !== undefined && (query.ids.length > RECENT_NOTE_LIMIT * 17 || !/^\d+(,\d+)*$/.test(query.ids))) {
+    throw new ApiError(400, "INVALID_ID", "笔记 ID 列表无效");
+  }
   return c.json(await listNotes(c.env.DB, {
     folderId: query.folder_id ? idOf(query.folder_id, "文件夹") : undefined,
+    ids: query.ids?.split(",").map(value => idOf(value)),
     starred: query.starred === "1",
     deleted: query.deleted === "1",
     q: query.q,

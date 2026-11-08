@@ -1,9 +1,32 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { activateIdentity } from "../../src/state/identity";
 beforeEach(() => activateIdentity("test-user"));
-import { createFolder, setCsrfToken, uploadAttachment } from "../../src/api/client";
+import { createFolder, listNotes, setCsrfToken, uploadAttachment } from "../../src/api/client";
 
 afterEach(() => { vi.unstubAllGlobals(); setCsrfToken(""); });
+
+it("loads the notes list with a query signal when AbortSignal.any is unavailable", async () => {
+  vi.stubGlobal("AbortSignal", {});
+  const fetchMock = vi.fn(async (_path: string, init: RequestInit) => {
+    expect(init.signal?.aborted).toBe(false);
+    return Response.json({ items: [] });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(listNotes({ folderId: 42 }, 1, new AbortController().signal)).resolves.toEqual({ items: [] });
+  expect(fetchMock.mock.calls[0]?.[0]).toContain("folder_id=42");
+});
+
+it.each(["caller", "account"] as const)("cancels a notes request when the %s cancels", async source => {
+  const caller = new AbortController();
+  vi.stubGlobal("fetch", vi.fn((_path: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    const signal = init.signal!;
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  })));
+  const rejected = expect(listNotes({}, 1, caller.signal)).rejects.toMatchObject({ name: "AbortError" });
+  if (source === "caller") caller.abort();
+  else activateIdentity("other-user");
+  await rejected;
+});
 
 it("lets fetch set multipart headers while retaining CSRF and cookies", async () => {
   const fetchMock = vi.fn(async (_path: unknown, init?: RequestInit) => {

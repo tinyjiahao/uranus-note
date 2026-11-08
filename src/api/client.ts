@@ -1,3 +1,4 @@
+import { t } from "../state/locale";
 import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
 import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, NoteStatsDto, PageDto } from "../../shared/dto";
 import type { AccountIdentity } from "../../shared/account";
@@ -11,29 +12,39 @@ export class ApiClientError extends Error {
   constructor(public status: number, public code: string, message: string, public body?: ApiErrorBody) { super(message); }
 }
 
+// Forward caller cancellation into the controller tracked for account changes.
+// This also works in browsers without AbortSignal.any.
+function forwardAbort(signal: AbortSignal | null | undefined, controller: AbortController) {
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  return () => signal?.removeEventListener("abort", abort);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const expected = identity();
-  if (!expected.userId && !["/api/session", "/api/register", "/api/account/switch", "/api/account/sessions"].includes(path)) throw new ApiClientError(401, "UNAUTHENTICATED", "请重新登录");
+  if (!expected.userId && !["/api/session", "/api/register", "/api/account/switch", "/api/account/sessions"].includes(path)) throw new ApiClientError(401, "UNAUTHENTICATED", t("请重新登录"));
   const controller = new AbortController();
   const untrack = trackRequest(controller);
   const headers = new Headers(init.headers);
   // FormData needs fetch's multipart boundary; never label binary uploads as JSON.
   if (typeof init.body === "string" && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (init.method && !["GET", "HEAD"].includes(init.method.toUpperCase()) && csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  const stopForwarding = forwardAbort(init.signal, controller);
   try {
-  const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal });
+  const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: controller.signal });
   const body = await response.json().catch(() => ({})) as T | ApiErrorBody;
-  if (!identityMatches(expected)) throw new ApiClientError(401, "IDENTITY_CHANGED", "账号状态已变化");
+  if (!identityMatches(expected)) throw new ApiClientError(401, "IDENTITY_CHANGED", t("账号状态已变化"));
   if (!response.ok) {
     if (response.status === 401 && (path !== "/api/session" || init.method === "DELETE")) lockIdentity();
     const error = body as ApiErrorBody;
-    throw new ApiClientError(response.status, error.error?.code ?? "HTTP_ERROR", error.error?.message ?? `请求失败 (${response.status})`, error);
+    throw new ApiClientError(response.status, error.error?.code ?? "HTTP_ERROR", error.error?.message ?? t("请求失败 ({0})", response.status), error);
   }
   if (expected.userId && /^\/api\/(notes|folders|attachments|import)(\/|\?|$)/.test(path)) {
     afterActiveRequest(`${expected.userId}:${expected.epoch}`, async () => (await request<{ expiresAt: number }>("/api/session/activity", { method: "POST", signal: AbortSignal.timeout(10_000) })).expiresAt);
   }
   return body as T;
-  } finally { untrack(); }
+  } finally { stopForwarding(); untrack(); }
 }
 
 export type Session = { authenticated: boolean; csrfToken?: string; expiresAt?: number; user?: AccountIdentity; defaultDataOwner?: boolean; registrationEnabled?: boolean };
@@ -71,10 +82,11 @@ export const createFolder = (name: string) => request<FolderDto>("/api/folders",
 export const renameFolder = (id: number, name: string) => request<FolderDto>(`/api/folders/${id}`, { method: "PATCH", body: JSON.stringify({ name }) });
 export const deleteFolder = (id: number) => request<{ deleted: boolean }>(`/api/folders/${id}`, { method: "DELETE" });
 
-export type NoteFilters = { folderId?: number | undefined; starred?: boolean | undefined; deleted?: boolean | undefined; q?: string | undefined; sortBy?: string | undefined; sortDir?: string | undefined };
+export type NoteFilters = { ids?: number[] | undefined; folderId?: number | undefined; starred?: boolean | undefined; deleted?: boolean | undefined; q?: string | undefined; sortBy?: string | undefined; sortDir?: string | undefined };
 export function listNotes(filters: NoteFilters = {}, page = 1, signal?: AbortSignal) {
   const params = new URLSearchParams({ page: String(page), pageSize: "50", sort_by: filters.sortBy ?? "updated_at", sort_dir: filters.sortDir ?? "desc" });
   if (filters.folderId) params.set("folder_id", String(filters.folderId));
+  if (filters.ids?.length) params.set("ids", filters.ids.join(","));
   if (filters.starred) params.set("starred", "1");
   if (filters.deleted) params.set("deleted", "1");
   if (filters.q?.trim()) params.set("q", filters.q.trim());
@@ -106,21 +118,22 @@ export const restoreVersion = (id: number, versionId: number, revision: number) 
 export type AttachmentDto = { id: string; noteId: number; fileName: string; mime: string; size: number; etag: string | null; url: string };
 export async function downloadAttachmentBytes(id: string, signal: AbortSignal, budget: number) {
   const expected = identity(), controller = new AbortController(), untrack = trackRequest(controller);
-  if (!expected.userId) { untrack(); throw new Error("请先登录"); }
+  if (!expected.userId) { untrack(); throw new Error(t("请先登录")); }
+  const stopForwarding = forwardAbort(signal, controller);
   try {
-    const response = await fetch(`/api/attachments/${encodeURIComponent(id)}`, { credentials: "same-origin", signal: AbortSignal.any([signal, controller.signal]) });
-    if (!response.ok || !response.body) throw new Error(`附件不可用 (${response.status})`);
-    if (Number(response.headers.get("Content-Length")) > budget) { await response.body.cancel(); throw new Error("超过导出体积上限"); }
+    const response = await fetch(`/api/attachments/${encodeURIComponent(id)}`, { credentials: "same-origin", signal: controller.signal });
+    if (!response.ok || !response.body) throw new Error(t("附件不可用 ({0})", response.status));
+    if (Number(response.headers.get("Content-Length")) > budget) { await response.body.cancel(); throw new Error(t("超过导出体积上限")); }
     const reader = response.body.getReader(), chunks: Uint8Array[] = []; let length = 0;
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
-      length += value.length; if (length > budget) { await reader.cancel(); throw new Error("超过导出体积上限"); } chunks.push(value);
+      length += value.length; if (length > budget) { await reader.cancel(); throw new Error(t("超过导出体积上限")); } chunks.push(value);
     }
-    if (!identityMatches(expected)) throw new Error("账号状态已变化");
+    if (!identityMatches(expected)) throw new Error(t("账号状态已变化"));
     const result = new Uint8Array(length); let offset = 0;
     for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
     return result;
-  } finally { untrack(); }
+  } finally { stopForwarding(); untrack(); }
 }
 export async function uploadAttachment(noteId: number, file: File): Promise<AttachmentDto> {
   const form = new FormData();

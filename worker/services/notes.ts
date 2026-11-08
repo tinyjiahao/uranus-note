@@ -8,6 +8,7 @@ import { existingOperation, validateOperationId } from "./operations";
 import { searchMatch } from "../../shared/searchMatch";
 import type { AccountSession } from "./accountSessions";
 import { businessWrite } from "./businessWrite";
+import { RECENT_NOTE_LIMIT } from "../../shared/recentNotes";
 
 type NoteRow = {
   id: number; folder_id: number; title: string; snippet: string; content_json: string;
@@ -34,7 +35,7 @@ export async function getNote(db: D1Database, id: number, session?: AccountSessi
   return detail(row);
 }
 
-export type ListOptions = { folderId?: number | undefined; starred?: boolean | undefined; deleted?: boolean | undefined; q?: string | undefined; sortBy?: string | undefined; sortDir?: string | undefined; page?: number | undefined; pageSize?: number | undefined };
+export type ListOptions = { ids?: number[] | undefined; folderId?: number | undefined; starred?: boolean | undefined; deleted?: boolean | undefined; q?: string | undefined; sortBy?: string | undefined; sortDir?: string | undefined; page?: number | undefined; pageSize?: number | undefined };
 
 export async function listNotes(db: D1Database, options: ListOptions, session?: AccountSession): Promise<PageDto<NoteListItem>> {
   const page = options.page ?? 1;
@@ -47,6 +48,13 @@ export async function listNotes(db: D1Database, options: ListOptions, session?: 
   if (direction !== "asc" && direction !== "desc") throw new ApiError(400, "INVALID_SORT", "不支持的排序方向");
   const where = ["n.user_id IS ?", "n.purge_pending = 0", options.deleted ? "n.deleted_at IS NOT NULL" : "n.deleted_at IS NULL"];
   const bindings: unknown[] = [session?.user.id ?? null];
+  if (options.ids) {
+    if (!options.ids.length || options.ids.length > RECENT_NOTE_LIMIT || options.ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new ApiError(400, "INVALID_ID", "笔记 ID 列表无效");
+    }
+    where.push(`n.id IN (${options.ids.map(() => "?").join(",")})`);
+    bindings.push(...options.ids);
+  }
   if (options.folderId !== undefined && !await db.prepare("SELECT id FROM uranus_folders WHERE id=? AND user_id IS ?").bind(options.folderId, session?.user.id ?? null).first()) {
     throw new ApiError(404, "FOLDER_NOT_FOUND", "文件夹不存在");
   }

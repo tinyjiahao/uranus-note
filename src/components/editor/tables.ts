@@ -1,3 +1,4 @@
+import { t } from "../../state/locale";
 import { Table, TableCell, TableHeader, TableRow, TableView, updateColumns } from "@tiptap/extension-table";
 import { Extension, findParentNode, type Editor } from "@tiptap/core";
 import { CellSelection, TableMap, addRowBefore, addRowAfter, addColumnBefore, addColumnAfter, selectedRect } from "@tiptap/pm/tables";
@@ -98,7 +99,7 @@ class UranusTableView extends TableView {
     this.dom.dataset.active = String(active);
     if (active && this.editor.state.selection instanceof CellSelection) {
       const rect = selectedRect(this.editor.state);
-      this.dom.dataset.selectionLabel = "已选 " + (rect.bottom - rect.top) * (rect.right - rect.left) + " 个单元格";
+      this.dom.dataset.selectionLabel = t("已选 {0} 个单元格", (rect.bottom - rect.top) * (rect.right - rect.left));
     } else delete this.dom.dataset.selectionLabel;
   };
   private layoutHandles = () => {
@@ -141,24 +142,24 @@ class UranusTableView extends TableView {
         this.editor.view.dispatch(this.editor.state.tr.setSelection(selection)); return true;
       };
       const open = (kind: string, anchor: HTMLElement) => this.editor.view.dom.dispatchEvent(new CustomEvent("uranus-table-menu", { detail: { kind, anchor } }));
-      const corner = button("表格菜单", "table-corner", () => {
+      const corner = button(t("表格菜单"), "table-corner", () => {
         const pos = this.getPos(); if (pos === undefined || !this.editor.isEditable) return;
         if (tableContext(this.editor)?.pos !== pos) this.editor.commands.setTextSelection(pos + 3);
         open("more", corner);
       }); corner.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18M3 15h18"/></svg>';
-      const cellMenu = button("单元格操作", "table-cell-menu", () => {
+      const cellMenu = button(t("单元格操作"), "table-cell-menu", () => {
         const pos = this.getPos(); if (pos === undefined || !this.editor.isEditable) return;
         if (tableContext(this.editor)?.pos !== pos) this.editor.commands.setTextSelection(pos + 3);
         open("cell", cellMenu);
-      }); cellMenu.textContent = "单元格";
+      }); cellMenu.textContent = t("单元格");
       for (const axis of ["row", "column"] as const) {
         const count = axis === "row" ? rows.length : cells.length;
         for (let i = 0; i < count; i++) {
-          const handle = button(`第 ${i + 1} ${axis === "row" ? "行" : "列"}菜单`, `table-${axis}-handle`, () => { if (select(axis, i)) open(axis, handle); });
+          const handle = button(t("第 {0} {1}菜单", i + 1, axis === "row" ? t("行") : t("列")), `table-${axis}-handle`, () => { if (select(axis, i)) open(axis, handle); });
           handle.dataset.index = String(i);
         }
         for (let i = 0; i <= count; i++) {
-          const insert = button(`在第 ${i + 1} ${axis === "row" ? "行" : "列"}位置插入`, `table-insert-${axis}`, () => {
+          const insert = button(t("在第 {0} {1}位置插入", i + 1, axis === "row" ? t("行") : t("列")), `table-insert-${axis}`, () => {
             if (!select(axis, Math.max(0, i - 1))) return;
             if (axis === "row") { if (i === 0) this.editor.commands.addRowBefore(); else this.editor.commands.addRowAfter(); }
             else { if (i === 0) this.editor.commands.addColumnBefore(); else this.editor.commands.addColumnAfter(); }

@@ -6,6 +6,9 @@ import { App } from "./app/App";
 import "./styles.css";
 import "./ui-surfaces.css";
 import { installController } from "./state/install";
+import { getLocale } from "./state/locale";
+
+document.documentElement.lang = getLocale();
 
 // Capture once at startup, including events arriving before Settings is opened.
 const stopInstallEvents = installController.start(window, window.matchMedia("(display-mode: standalone)"));

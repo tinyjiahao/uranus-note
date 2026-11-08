@@ -417,7 +417,7 @@
 
 ## 29. 与既有规格的关系
 
-- plan_v7 的 schema 常量规则继续有效（`shared/schemaVersion.ts` 为唯一来源）；v8 将当前 schema 由 11 升到 15，并在 `AGENTS.md`、`doc/api.md` 中同步。
+- plan_v7 的 schema 常量规则继续有效（`shared/schemaVersion.ts` 为唯一来源）；v8 将当前 schema 由 11 升到 15，并在 `AGENTS.md`、`doc/reference/api.md` 中同步。
 - 块级图片、文件附件、标签、笔记互链、保存队列、幂等与 revision 乐观锁语义不变。
 - 本文不修改 plan_v7；原先追加到 plan_v7 的“行内图片补充”“笔记信息补充”已移入本文并从 plan_v7 恢复。
 - plan_v1、plan_v2 保留原始需求与后续规划供追溯，并标明由后续版本替代的鉴权方案；未交付项不能仅因尚未实现而删除。实际完成状态与验收证据记录在 implementation 文档中。

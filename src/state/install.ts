@@ -1,3 +1,4 @@
+import { t } from "./locale";
 export interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
@@ -32,7 +33,7 @@ export class InstallController {
     const installed = () => {
       this.generation++;
       this.event = null;
-      this.update({ available: false, prompting: false, message: "浏览器已报告安装完成，可打开 Uranus 独立窗口。" });
+      this.update({ available: false, prompting: false, message: t("浏览器已报告安装完成，可打开 Uranus 独立窗口。") });
     };
     const mode = () => {
       if (media.matches) { this.generation++; this.event = null; }
@@ -61,14 +62,14 @@ export class InstallController {
     if (!event || this.state.prompting || this.state.standalone) return;
     this.event = null;
     const generation = ++this.generation;
-    this.update({ available: false, prompting: true, message: "请在浏览器安装提示中选择。" });
+    this.update({ available: false, prompting: true, message: t("请在浏览器安装提示中选择。") });
     try {
       await event.prompt();
       const choice = await event.userChoice;
       if (generation === this.generation) this.update({ message: choice.outcome === "accepted"
-        ? "已接受安装提示，请等待浏览器完成安装。" : "已取消安装，仍可继续使用网页版。" });
+        ? t("已接受安装提示，请等待浏览器完成安装。") : t("已取消安装，仍可继续使用网页版。") });
     } catch {
-      if (generation === this.generation) this.update({ message: "无法打开安装提示，请按下方指引手工安装。" });
+      if (generation === this.generation) this.update({ message: t("无法打开安装提示，请按下方指引手工安装。") });
     } finally {
       if (generation === this.generation) this.update({ prompting: false });
     }

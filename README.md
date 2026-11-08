@@ -2,7 +2,7 @@
 
 Uranus 是一个面向单用户自部署的 Cloudflare 原生笔记应用。React SPA、Hono API、D1 数据库和私有 R2 附件通过同一个 Worker 部署；浏览器不会直接接触 Cloudflare 资源凭据。
 
-> 当前版本：`0.2.0-preview.1`，已接入 v6 邮箱账号与用户独立笔记空间。实际部署、验证证据及剩余人工验收见 [v6 实施记录](doc/implementation-v6.md)；不以已实现代替全项验收。旧网页令牌轮换规划已由邮箱账号方案替代。
+> 当前版本：`0.2.0-preview.1`，已接入 v6 邮箱账号与用户独立笔记空间。实际部署、验证证据及剩余人工验收见 [v6 实施记录](doc/implementation/implementation-v6.md)；不以已实现代替全项验收。旧网页令牌轮换规划已由邮箱账号方案替代。
 
 ## 已实现
 
@@ -11,7 +11,7 @@ Uranus 是一个面向单用户自部署的 Cloudflare 原生笔记应用。Reac
 - TipTap 富文本、标题、列表、待办、引用、代码、高亮、链接、基础表格、只读模式和 Markdown 导入。
 - 800ms 串行自动保存、整数 revision 乐观锁、UUIDv7 幂等操作和 IndexedDB 未提交草稿。
 - PNG/JPEG/WebP/GIF 私有 R2 附件、魔数检查、正文/历史版本引用和 24 小时无引用回收。
-- v7 工作区新增行内彩色标签、白名单文件附件、笔记互链、大纲、Markdown/含附件 ZIP 导出及打印样式；版本与实际验证状态见 [v7 实施记录](doc/implementation-v7.md)。不代表生产已升级，IME 与 iOS 真机门槛仍需验收。
+- v7 工作区新增行内彩色标签、白名单文件附件、笔记互链、大纲、Markdown/含附件 ZIP 导出及打印样式；版本与实际验证状态见 [v7 实施记录](doc/implementation/implementation-v7.md)。不代表生产已升级，IME 与 iOS 真机门槛仍需验收。
 - 自动/手动版本快照、只读预览和原子恢复。
 - 软删除、恢复、分批硬删除队列、30 天定时发现、持久租约和失败退避。
 - 持久维护模式、逻辑记录与附件字节备份、空目标分批幂等恢复及校验和验证。
@@ -25,7 +25,7 @@ macOS 上安装后打开应用，在 Dock 中右键 Uranus 图标 → 选项 →
 
 应用仍需联网；没有 Service Worker、离线启动、资源预缓存或后台同步。现有会话规则与草稿机制不变，关闭窗口前请确认服务端保存成功；会话过期仍须重新登录。独立窗口中不重复提供安装按钮。
 
-清单与图标使用同源路径，适用于现有根路径自部署。安装名称/图标的刷新由浏览器控制。开发者如修改品牌 SVG，可在安装了 Chrome 的环境运行 `node scripts/generate-install-icons.mjs` 重新生成 PNG 图标；生成的图标需随源码提交。实际 macOS Chrome 安装与 Dock 验收状态见 [v4 实现记录](doc/implementation-v4.md)。
+清单与图标使用同源路径，适用于现有根路径自部署。安装名称/图标的刷新由浏览器控制。开发者如修改品牌 SVG，可在安装了 Chrome 的环境运行 `node scripts/generate-install-icons.mjs` 重新生成 PNG 图标；生成的图标需随源码提交。实际 macOS Chrome 安装与 Dock 验收状态见 [v4 实现记录](doc/implementation/implementation-v4.md)。
 
 ## 本地开发
 
@@ -73,7 +73,7 @@ npm run test:e2e
 
 ## 部署
 
-部署前阅读 [部署指南](doc/deployment.md)，配置 D1、私有 R2 和 Rate Limiting binding。升级既有实例须先受控冻结、加密备份并验证恢复，再追加 migrations、初始化归属和切换新 Worker；不能直接覆盖旧鉴权。生产配置不得提交到仓库。
+部署前阅读 [部署指南](doc/operations/deployment.md)，配置 D1、私有 R2 和 Rate Limiting binding。升级既有实例须先受控冻结、加密备份并验证恢复，再追加 migrations、初始化归属和切换新 Worker；不能直接覆盖旧鉴权。生产配置不得提交到仓库。
 
 ```bash
 npm run db:migrate:remote
@@ -81,7 +81,7 @@ npx wrangler secret put SESSION_SECRET
 npm run deploy
 ```
 
-API 摘要见 [API 文档](doc/api.md)，备份与恢复见 [运维指南](doc/backup-restore.md)。完整产品与验收基线始终是 [doc/plan_v1.md](doc/plan_v1.md)。
+API 摘要见 [API 文档](doc/reference/api.md)，备份与恢复见 [运维指南](doc/operations/backup-restore.md)。产品基线与各版本增量见 [文档索引](doc/README.md)。
 
 ## 隐私与安全
 

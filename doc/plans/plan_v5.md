@@ -1,6 +1,6 @@
 # Uranus v5 — 日常编辑体验修复与增强需求
 
-> 日期：2026-10-26。状态：需求与优先级基线，已同步本轮后续讨论和修改；实施和验证记录见 [implementation-v5.md](implementation-v5.md)，本文不代表全部发布门槛已通过。
+> 日期：2026-10-26。状态：需求与优先级基线，已同步本轮后续讨论和修改；实施和验证记录见 [implementation-v5.md](../implementation/implementation-v5.md)，本文不代表全部发布门槛已通过。
 > 来源：最初 13 项使用反馈及后续交互调整。第 2 节中的旧行为描述为立项时观察；最终行为以各章节及第 13 节变更追踪为准，不把旧描述当作当前实现。
 > 基线：沿用 plan_v1–v4；只调整本文明确列出的体验与内容能力。继续采用 Cloudflare Worker + D1/R2 bindings，不新增离线功能、Service Worker 或网页令牌管理。
 

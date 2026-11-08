@@ -2,9 +2,9 @@
 
 > v6 使用受控部署工具迁移邮箱账号，不通过普通账号 Cookie 或公开维护接口操作全站数据。实际发布记录与仍需人工验收的范围见 implementation-v6.md。
 
-升级前阅读 [schema 2—4 升级与验证说明](implementation-v2.md) 和 [schema 5 实施记录](implementation-v5.md)。必须先备份再迁移；已有新 schema 内容时不能直接回滚到旧 Worker。本地实现不代表已执行生产发布。
+升级前阅读 [schema 2—4 升级与验证说明](../implementation/implementation-v2.md) 和 [schema 5 实施记录](../implementation/implementation-v5.md)。必须先备份再迁移；已有新 schema 内容时不能直接回滚到旧 Worker。本地实现不代表已执行生产发布。
 
-v7 工作区新增 0010 迁移，保留旧列并回填新的版本范围列，应用层支持 schema 1—11。升级步骤与未完成的真机验收见 [v7 实施记录](implementation-v7.md)；最新发布状态以实施记录末尾为准。产生 label/fileAttachment/noteLink 后不得回滚到 v6 Worker。
+v7 工作区新增 0010 迁移，保留旧列并回填新的版本范围列，应用层支持 schema 1—11。升级步骤与未完成的真机验收见 [v7 实施记录](../implementation/implementation-v7.md)；最新发布状态以实施记录末尾为准。产生 label/fileAttachment/noteLink 后不得回滚到 v6 Worker。
 
 ## 1. 创建资源
 

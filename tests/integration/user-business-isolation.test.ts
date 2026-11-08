@@ -33,6 +33,9 @@ it("scopes folders, counts, search and pagination before returning rows", async 
   const foundB = await listNotes(db, { q: "unique-scope-search", pageSize: 1 }, b);
   expect(foundA.totalCount).toBe(1); expect(foundA.items.map((n) => n.id)).toEqual([na.id]);
   expect(foundB.totalCount).toBe(1); expect(foundB.items.map((n) => n.id)).toEqual([nb.id]);
+  expect((await listNotes(db, { ids: [nb.id, na.id] }, a)).items.map(n => n.id)).toEqual([na.id]);
+  expect((await listNotes(db, { ids: [nb.id, na.id], q: "Bob" }, a)).totalCount).toBe(0);
+  await expect(listNotes(db, { ids: Array(21).fill(na.id) }, a)).rejects.toMatchObject({ status: 400 });
   expect((await listFolders(db, a)).map((f) => f.id)).not.toContain(fb.id);
   await expect(listNotes(db, { folderId: fb.id }, a)).rejects.toMatchObject({ status: 404 });
   await expect(renameFolder(db, fb.id, "stolen", a)).rejects.toMatchObject({ status: 404 });

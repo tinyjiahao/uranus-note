@@ -1,3 +1,4 @@
+import { t, useLocale } from "../../state/locale";
 import { Node, type Editor } from "@tiptap/core";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { useQuery } from "@tanstack/react-query";
@@ -11,11 +12,12 @@ import { identity } from "../../state/identity";
 import { Popup, type PopupAnchor } from "../Popup";
 
 function NoteLinkView({ node }: NodeViewProps) {
+  useLocale();
   const navigate = useNavigate(), id = Number(node.attrs.noteId);
   const target = useQuery({ queryKey: ["user", identity().userId, "note", id], queryFn: ({ signal }) => getNote(id, signal), retry: false, staleTime: 30_000 });
   const missing = target.isError || Boolean(target.data?.deletedAt);
   return <NodeViewWrapper as="span" contentEditable={false} data-drag-handle="" className={`note-link${missing ? " note-link-missing" : ""}`}>
-    <a data-note-link href={`/notes/${id}`} title={missing ? "目标笔记不可用" : "打开笔记"} aria-disabled={missing} onClick={event => { event.preventDefault(); if (!missing) navigate(`/notes/${id}`); }}>{target.data && !missing ? target.data.title || "未命名笔记" : String(node.attrs.title || "未命名笔记")}{missing && "（不可用）"}</a>
+    <a data-note-link href={`/notes/${id}`} title={missing ? t("目标笔记不可用") : t("打开笔记")} aria-disabled={missing} onClick={event => { event.preventDefault(); if (!missing) navigate(`/notes/${id}`); }}>{target.data && !missing ? target.data.title || t("未命名笔记") : String(node.attrs.title || t("未命名笔记"))}{missing && t("（不可用）")}</a>
   </NodeViewWrapper>;
 }
 export const NoteLinkNode = Node.create({
@@ -25,11 +27,12 @@ export const NoteLinkNode = Node.create({
     const parsed = noteLinkAttributes.safeParse({ noteId: Number(element.getAttribute("data-id")), title: element.getAttribute("data-title") });
     return parsed.success ? parsed.data : false;
   } }],
-  renderHTML: ({ node }) => ["span", { "data-note-link": "1", "data-id": node.attrs.noteId, "data-title": node.attrs.title }, node.attrs.title || "未命名笔记"],
-  renderText: ({ node }) => String(node.attrs.title || "未命名笔记"),
+  renderHTML: ({ node }) => ["span", { "data-note-link": "1", "data-id": node.attrs.noteId, "data-title": node.attrs.title }, node.attrs.title || t("未命名笔记")],
+  renderText: ({ node }) => String(node.attrs.title || t("未命名笔记")),
   addNodeView: () => ReactNodeViewRenderer(NoteLinkView),
 });
 export function NoteLinkPopup({ editor, anchor, close }: { editor: Editor; anchor: PopupAnchor; close: () => void }) {
+  useLocale();
   const [query, setQuery] = useState(""), [items, setItems] = useState<NoteListItem[]>([]), [error, setError] = useState(""), [busy, setBusy] = useState(false);
   useEffect(() => {
     const controller = new AbortController(); setBusy(true); setError(""); setItems([]);
@@ -45,10 +48,10 @@ export function NoteLinkPopup({ editor, anchor, close }: { editor: Editor; ancho
     })().catch(error => { if (!controller.signal.aborted) setError((error as Error).message); }).finally(() => { if (!controller.signal.aborted) setBusy(false); }); }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [query]);
-  return <Popup title="插入笔记链接" anchor={anchor} close={close} restoreFocus={() => editor.view.focus()}>
-    <input data-initial-focus aria-label="搜索笔记标题" placeholder="搜索当前空间的笔记标题" maxLength={100} value={query} onChange={event => setQuery(event.target.value)} />
-    {busy && <p role="status">正在搜索…</p>}{error && <p role="alert">{error}</p>}
-    {!busy && !error && !items.length && <p>未找到笔记</p>}
-    {items.map(note => <button key={note.id} onClick={() => { if (editor.view.composing || !editor.isEditable) return; editor.chain().focus().insertContent({ type: "noteLink", attrs: { noteId: note.id, title: note.title.replace(/[\p{Cc}]/gu, " ") } }).run(); close(); }}>{note.title || "未命名笔记"}</button>)}
+  return <Popup title={t("插入笔记链接")} anchor={anchor} close={close} restoreFocus={() => editor.view.focus()}>
+    <input data-initial-focus aria-label={t("搜索笔记标题")} placeholder={t("搜索当前空间的笔记标题")} maxLength={100} value={query} onChange={event => setQuery(event.target.value)} />
+    {busy && <p role="status">{t("正在搜索…")}</p>}{error && <p role="alert">{error}</p>}
+    {!busy && !error && !items.length && <p>{t("未找到笔记")}</p>}
+    {items.map(note => <button key={note.id} onClick={() => { if (editor.view.composing || !editor.isEditable) return; editor.chain().focus().insertContent({ type: "noteLink", attrs: { noteId: note.id, title: note.title.replace(/[\p{Cc}]/gu, " ") } }).run(); close(); }}>{note.title || t("未命名笔记")}</button>)}
   </Popup>;
 }

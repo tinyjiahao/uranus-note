@@ -1,3 +1,4 @@
+import { t, useLocale } from "../../state/locale";
 import { Extension, Node, type Editor } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
 import { Fragment } from "@tiptap/pm/model";
@@ -25,6 +26,7 @@ export function fileWithMime(file: File) {
   return mime ? new File([file], file.name, { type: mime }) : file;
 }
 function FileCard({ node, selected, editor, getPos }: NodeViewProps) {
+  useLocale();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   // Close the actions popup as soon as the caret/selection moves elsewhere (arrow keys, clicks) or the document changes.
@@ -51,14 +53,14 @@ function FileCard({ node, selected, editor, getPos }: NodeViewProps) {
     // Hot updates can replace this UI while an existing Editor still owns the
     // previous schema. ProseMirror silently drops attributes unknown to it.
     if (!Object.prototype.hasOwnProperty.call(current.attrs, "display")) {
-      window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: "编辑器尚未加载附件样式更新，请先保存笔记，再刷新页面后切换。" }));
+      window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: t("编辑器尚未加载附件样式更新，请先保存笔记，再刷新页面后切换。") }));
       return;
     }
     // Target the node's current position, not a selection lost when the popup takes focus.
     if (current.attrs.display !== value) editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, display: value }));
   };
   return <NodeViewWrapper data-drag-handle="" className={`file-attachment file-attachment--${display}${selected || anchor ? " ProseMirror-selectednode" : ""}`} contentEditable={false}>
-    <button type="button" className={`file-attachment-link${mime === "application/pdf" ? " file-attachment-pdf" : ""}`} aria-label={`附件操作：${String(node.attrs.fileName)}`} aria-haspopup="dialog" aria-expanded={Boolean(anchor)} onClick={event => {
+    <button type="button" className={`file-attachment-link${mime === "application/pdf" ? " file-attachment-pdf" : ""}`} aria-label={t("附件操作：{0}", String(node.attrs.fileName))} aria-haspopup="dialog" aria-expanded={Boolean(anchor)} onClick={event => {
       event.stopPropagation();
       const pos = getPos();
       if (editor.isEditable && typeof pos === "number") editor.commands.setNodeSelection(pos);
@@ -70,14 +72,14 @@ function FileCard({ node, selected, editor, getPos }: NodeViewProps) {
     }}>
       <Icon aria-hidden="true" /><span><strong title={String(node.attrs.fileName)}>{String(node.attrs.fileName)}</strong>{display === "card" && <small>{(Number(node.attrs.size) / 1024).toFixed(1)} KB</small>}</span>
     </button>
-    {anchor && <Popup anchor={anchor} title="附件操作" autoFocus={keyboardOpen} positionAnchor={anchor.closest<HTMLElement>(".file-attachment")} placement="top" className="attachment-actions-popup" close={() => setAnchor(null)}>
-      <div className="attachment-actions" role="group" aria-label="附件操作工具栏">
-        <a className="attachment-action" aria-label="下载附件" title="下载附件" data-file-download href={`/api/attachments/${encodeURIComponent(String(node.attrs.attachmentId))}`} download={String(node.attrs.fileName)}><Download aria-hidden="true" /><span>下载</span></a>
-        {isPreviewable(mime) && <button type="button" className="attachment-action" title="预览附件" aria-label={`预览附件：${String(node.attrs.fileName)}`} onClick={() => { setAnchor(null); openAttachmentPreview({ id: String(node.attrs.attachmentId), name: String(node.attrs.fileName), mime, size: Number(node.attrs.size) }); }}><Eye aria-hidden="true" /><span>预览</span></button>}
+    {anchor && <Popup anchor={anchor} title={t("附件操作")} autoFocus={keyboardOpen} positionAnchor={anchor.closest<HTMLElement>(".file-attachment")} placement="top" className="attachment-actions-popup" close={() => setAnchor(null)}>
+      <div className="attachment-actions" role="group" aria-label={t("附件操作工具栏")}>
+        <a className="attachment-action" aria-label={t("下载附件")} title={t("下载附件")} data-file-download href={`/api/attachments/${encodeURIComponent(String(node.attrs.attachmentId))}`} download={String(node.attrs.fileName)}><Download aria-hidden="true" /><span>{t("下载")}</span></a>
+        {isPreviewable(mime) && <button type="button" className="attachment-action" title={t("预览附件")} aria-label={t("预览附件：{0}", String(node.attrs.fileName))} onClick={() => { setAnchor(null); openAttachmentPreview({ id: String(node.attrs.attachmentId), name: String(node.attrs.fileName), mime, size: Number(node.attrs.size) }); }}><Eye aria-hidden="true" /><span>{t("预览")}</span></button>}
         {editable && <><span className="attachment-action-divider" aria-hidden="true" />
-          <button type="button" className="attachment-action" title="转为行内附件（可与文字同行）" aria-label="转为行内附件" onClick={() => { const pos = getPos(); setAnchor(null); if (typeof pos === "number") { editor.commands.setNodeSelection(pos); fileToInline(editor); } }}><TextCursorInput aria-hidden="true" /><span>行内</span></button>
-          <button type="button" className="attachment-action" title="紧凑样式" aria-label="紧凑样式" aria-pressed={display === "compact"} onClick={() => changeDisplay("compact")}><Minus aria-hidden="true" /><span>紧凑</span></button>
-          <button type="button" className="attachment-action" title="卡片样式" aria-label="卡片样式" aria-pressed={display === "card"} onClick={() => changeDisplay("card")}><PanelTop aria-hidden="true" /><span>卡片</span></button>
+          <button type="button" className="attachment-action" title={t("转为行内附件（可与文字同行）")} aria-label={t("转为行内附件")} onClick={() => { const pos = getPos(); setAnchor(null); if (typeof pos === "number") { editor.commands.setNodeSelection(pos); fileToInline(editor); } }}><TextCursorInput aria-hidden="true" /><span>{t("行内")}</span></button>
+          <button type="button" className="attachment-action" title={t("紧凑样式")} aria-label={t("紧凑样式")} aria-pressed={display === "compact"} onClick={() => changeDisplay("compact")}><Minus aria-hidden="true" /><span>{t("紧凑")}</span></button>
+          <button type="button" className="attachment-action" title={t("卡片样式")} aria-label={t("卡片样式")} aria-pressed={display === "card"} onClick={() => changeDisplay("card")}><PanelTop aria-hidden="true" /><span>{t("卡片")}</span></button>
         </>}
       </div>
     </Popup>}
@@ -170,6 +172,7 @@ export function inlineToFile(editor: Editor) {
 }
 
 function InlineFileView({ node, selected, editor, getPos }: NodeViewProps) {
+  useLocale();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
@@ -182,7 +185,7 @@ function InlineFileView({ node, selected, editor, getPos }: NodeViewProps) {
   const editable = useSyncExternalStore(subscribe, () => editor.isEditable);
   const mime = String(node.attrs.mime), name = String(node.attrs.fileName), Icon = fileIcon(mime);
   return <NodeViewWrapper as="span" data-drag-handle="" className={`inline-file${selected || anchor ? " ProseMirror-selectednode" : ""}`} contentEditable={false}>
-    <button type="button" className="inline-file-link" aria-label={`附件操作：${name}`} aria-haspopup="dialog" aria-expanded={Boolean(anchor)} onClick={event => {
+    <button type="button" className="inline-file-link" aria-label={t("附件操作：{0}", name)} aria-haspopup="dialog" aria-expanded={Boolean(anchor)} onClick={event => {
       event.stopPropagation();
       const pos = getPos();
       if (editor.isEditable && typeof pos === "number") editor.commands.setNodeSelection(pos);
@@ -191,12 +194,12 @@ function InlineFileView({ node, selected, editor, getPos }: NodeViewProps) {
       setKeyboardOpen(byKeyboard);
       setAnchor(anchor ? null : event.currentTarget);
     }}><Icon aria-hidden="true" /><span title={name}>{name}</span></button>
-    {anchor && <Popup anchor={anchor} title="附件操作" autoFocus={keyboardOpen} placement="top" className="attachment-actions-popup" close={() => setAnchor(null)}>
-      <div className="attachment-actions" role="group" aria-label="附件操作工具栏">
-        <a className="attachment-action" aria-label="下载附件" title="下载附件" data-file-download href={`/api/attachments/${encodeURIComponent(String(node.attrs.attachmentId))}`} download={name}><Download aria-hidden="true" /><span>下载</span></a>
-        {isPreviewable(mime) && <button type="button" className="attachment-action" title="预览附件" aria-label={`预览附件：${name}`} onClick={() => { setAnchor(null); openAttachmentPreview({ id: String(node.attrs.attachmentId), name, mime, size: Number(node.attrs.size) }); }}><Eye aria-hidden="true" /><span>预览</span></button>}
+    {anchor && <Popup anchor={anchor} title={t("附件操作")} autoFocus={keyboardOpen} placement="top" className="attachment-actions-popup" close={() => setAnchor(null)}>
+      <div className="attachment-actions" role="group" aria-label={t("附件操作工具栏")}>
+        <a className="attachment-action" aria-label={t("下载附件")} title={t("下载附件")} data-file-download href={`/api/attachments/${encodeURIComponent(String(node.attrs.attachmentId))}`} download={name}><Download aria-hidden="true" /><span>{t("下载")}</span></a>
+        {isPreviewable(mime) && <button type="button" className="attachment-action" title={t("预览附件")} aria-label={t("预览附件：{0}", name)} onClick={() => { setAnchor(null); openAttachmentPreview({ id: String(node.attrs.attachmentId), name, mime, size: Number(node.attrs.size) }); }}><Eye aria-hidden="true" /><span>{t("预览")}</span></button>}
         {editable && <><span className="attachment-action-divider" aria-hidden="true" />
-          <button type="button" className="attachment-action" title="转为独立附件（单独一行）" aria-label="转为独立附件" onClick={() => { const pos = getPos(); setAnchor(null); if (typeof pos === "number") { editor.commands.setNodeSelection(pos); inlineToFile(editor); } }}><Rows3 aria-hidden="true" /><span>独立</span></button>
+          <button type="button" className="attachment-action" title={t("转为独立附件（单独一行）")} aria-label={t("转为独立附件")} onClick={() => { const pos = getPos(); setAnchor(null); if (typeof pos === "number") { editor.commands.setNodeSelection(pos); inlineToFile(editor); } }}><Rows3 aria-hidden="true" /><span>{t("独立")}</span></button>
         </>}
       </div>
     </Popup>}

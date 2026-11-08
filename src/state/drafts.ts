@@ -1,3 +1,4 @@
+import { t } from "./locale";
 import { type ContentSchemaVersion } from "../../shared/schemaVersion";
 import type { ContentNode } from "../../shared/dto";
 import { identity } from "./identity";
@@ -7,7 +8,7 @@ const DB_NAME = "uranus-drafts";
 const STORE = "drafts";
 
 function openDatabase(userId: string | null, legacy = false): Promise<IDBDatabase> {
-  if (!userId) return Promise.reject(new Error("未登录，无法访问本机草稿"));
+  if (!userId) return Promise.reject(new Error(t("未登录，无法访问本机草稿")));
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(legacy ? DB_NAME : DB_NAME + "-v6:" + userId, 1);
     request.onupgradeneeded = () => request.result.createObjectStore(STORE, { keyPath: "noteId" });

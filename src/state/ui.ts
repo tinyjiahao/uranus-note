@@ -1,3 +1,4 @@
+import { getLocale, t } from "./locale";
 import { create } from "zustand";
 
 export type LayoutMode = "three" | "two" | "focus";
@@ -60,6 +61,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 }));
 export function noteTime(value: number, now = new Date()) {
   const date = new Date(value); const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-  const prefix = date.toDateString() === now.toDateString() ? "今天" : date.toDateString() === yesterday.toDateString() ? "昨天" : "";
-  return prefix ? `${prefix} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : date.toLocaleDateString();
+  const prefix = date.toDateString() === now.toDateString() ? t("今天") : date.toDateString() === yesterday.toDateString() ? t("昨天") : "";
+  return prefix ? `${prefix} ${date.toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" })}` : date.toLocaleDateString(getLocale());
 }

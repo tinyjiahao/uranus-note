@@ -89,8 +89,28 @@ test("images align independently in body and table cells and persist in readonly
   for (const handle of await editor.locator(".image-resize-handle").all()) await expect(handle).toBeHidden();
   await page.setViewportSize({ width: 768, height: 900 });
   expect(await cellImage.evaluate(el => el.querySelector("img")!.getBoundingClientRect().width <= el.closest("td")!.getBoundingClientRect().width)).toBe(true);
-  await cellImage.locator("img").dblclick();
+  await page.setViewportSize({ width: 320, height: 700 });
+  await headerImage.locator("img").dblclick();
   await expect(preview).toBeVisible();
+  const zoomIn = preview.getByRole("button", { name: "放大", exact: true });
+  const stage = preview.locator(".image-preview-stage");
+  await zoomIn.click();
+  await expect(preview.getByRole("button", { name: "恢复适合屏幕大小" })).toHaveText("125%");
+  await expect.poll(() => stage.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
+  await stage.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+  await expect(zoomIn).toBeInViewport();
+  await preview.getByRole("button", { name: "缩小", exact: true }).click();
+  await expect(preview.getByRole("button", { name: "恢复适合屏幕大小" })).toHaveText("100%");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      write: async ([item]: ClipboardItem[]) => {
+        const blob = await item!.getType("image/png");
+        if (blob.type !== "image/png" || !blob.size) throw new Error("Missing PNG data");
+      },
+    } });
+  });
+  await preview.getByRole("button", { name: "复制", exact: true }).click();
+  await expect(preview.getByRole("status")).toHaveText("图片已复制");
   await page.getByRole("button", { name: "关闭图片预览" }).click();
   await expect(preview).toHaveCount(0);
 });

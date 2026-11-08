@@ -117,3 +117,37 @@ test("search reveals folded code without persisting its temporary expansion", as
   await expect(body.locator("pre")).not.toHaveClass(/code-collapsed/);
   expect(await body.evaluate(el => (el as HTMLElement & { editor: Editor }).editor.state.doc.firstChild?.attrs.collapsed)).toBe(true);
 });
+
+test("long folded code can be selected, deleted and restored as one block", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("邮箱", { exact: true }).fill(testEmail());
+  await page.getByLabel("密码", { exact: true }).fill(testPassword());
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("button", { name: "新建笔记", exact: true }).click();
+  const body = page.locator(".prose-editor");
+  await body.evaluate(element => {
+    const editor = (element as HTMLElement & { editor: Editor }).editor;
+    const text = Array.from({ length: 4159 }, (_, index) => "code line " + (index + 1)).join("\n");
+    editor.commands.setContent({ type: "doc", content: [
+      { type: "codeBlock", attrs: { collapsed: true }, content: [{ type: "text", text }] },
+      { type: "paragraph", content: [{ type: "text", text: "保留正文" }] },
+    ] });
+  });
+  const block = body.locator("pre");
+  await expect(block).toHaveClass(/code-collapsed/);
+  await expect(block.locator(".code-line-no")).toHaveCount(9);
+  await block.getByRole("button", { name: "选中整块" }).click();
+  await expect(block).toHaveClass(/ProseMirror-selectednode/);
+  await page.keyboard.press("Backspace");
+  await expect(block).toHaveCount(0);
+  await expect(body).toHaveText("保留正文");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(block).toHaveClass(/code-collapsed/);
+  expect(await body.evaluate(element => (element as HTMLElement & { editor: Editor }).editor.state.doc.firstChild?.textContent.split("\n").length)).toBe(4159);
+  await block.getByRole("button", { name: "删除代码块" }).click();
+  await expect(block).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(block).toHaveCount(1);
+  await page.getByRole("button", { name: "切换到只读模式" }).click();
+  await expect(block.getByRole("button", { name: "删除代码块" })).toHaveCount(0);
+});
