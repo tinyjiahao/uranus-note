@@ -1,3 +1,5 @@
+import { t } from "./locale";
+import { cacheBaselineUnsafe, acceptCacheBaseline } from "./noteCache";
 import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
 import type { ContentNode, NoteDetail } from "../../shared/dto";
 import { patchNote, uuidv7, type NotePatch } from "../api/client";
@@ -11,6 +13,8 @@ type Queued = { patch: NotePatch; sequence: number; operationId: string };
 export class NoteSaveQueue {
   private owner = identity();
   private disposed = false;
+  private inaccessible = false;
+  private baselineUntrusted = false;
   private valid() { return !this.disposed && identityMatches(this.owner); }
   dispose() {
     this.disposed = true;
@@ -43,6 +47,18 @@ export class NoteSaveQueue {
   // Never roll back a revision already confirmed by our own successful save.
   updateRevision(revision: number) { if (!this.running && !this.failed && !this.pending) this.revision = Math.max(this.revision, revision); }
 
+  observeServer(note: NoteDetail) {
+    if ((this.hasUnsaved() && note.revision !== this.revision) || cacheBaselineUnsafe(this.noteId)) {
+      if (cacheBaselineUnsafe(this.noteId)) { this.baselineUntrusted = true; void this.persistLocal(); }
+      window.clearTimeout(this.saveTimer); this.saveTimer = undefined;
+      this.report("conflict", undefined, Object.assign(new Error(t("服务器版本已改变，请先保留或复制本机草稿，不能直接覆盖服务器")), { status: 409, body: { error: { latest: note } } }));
+    }
+  }
+  stopInaccessible() {
+    this.inaccessible = true; window.clearTimeout(this.saveTimer); this.saveTimer = undefined;
+    void this.persistLocal();
+    this.report("error", undefined, Object.assign(new Error(t("笔记不存在或无权访问")), { status: 404 }));
+  }
   localContent() { return this.latestContent; }
   hasUnsaved() { return this.running || Boolean(this.pending || this.failed); }
   notify() { this.report(this.status, undefined, this.lastError); }
@@ -53,7 +69,7 @@ export class NoteSaveQueue {
     this.scheduleSync();
   }
   private scheduleSync() {
-    if (!this.valid()) return;
+    if (!this.valid() || this.inaccessible || this.baselineUntrusted || cacheBaselineUnsafe(this.noteId)) return;
     if (this.saveTimer !== undefined || this.running || !this.hasUnsaved() || this.status === "conflict") return;
     if (this.failed) {
       const status = (this.lastError as (Error & { status?: number }) | undefined)?.status;
@@ -74,7 +90,7 @@ export class NoteSaveQueue {
   }
   private async persist(sequence: number, content: ContentNode) {
     try {
-      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: CURRENT_SCHEMA_VERSION, editSequence: sequence, updatedAt: Date.now(), content }, this.owner.userId);
+      const stored = await putDraft({ noteId: this.noteId, baseRevision: this.revision, contentSchemaVersion: CURRENT_SCHEMA_VERSION, ...(this.baselineUntrusted ? { baselineUntrusted: true } : {}), editSequence: sequence, updatedAt: Date.now(), content }, this.owner.userId);
       if (sequence <= this.confirmedSequence && this.valid()) { await deleteDraftIfSequence(this.noteId, sequence, this.owner.userId); return; }
       if (stored) { this.localSequence = Math.max(this.localSequence, sequence); if (sequence === this.sequence) this.localError = false; }
       if (sequence === this.sequence) this.report(this.status, undefined, this.lastError);
@@ -85,6 +101,7 @@ export class NoteSaveQueue {
   }
 
   resolveWithServer(revision: number) {
+    acceptCacheBaseline(this.noteId); this.baselineUntrusted = false;
     window.clearTimeout(this.draftTimer); window.clearTimeout(this.draftMaxTimer); window.clearTimeout(this.saveTimer);
     this.draftTimer = this.draftMaxTimer = this.saveTimer = undefined;
     const sequences = [this.failed?.sequence, this.pending?.sequence].filter((value): value is number => value !== undefined);
@@ -113,7 +130,7 @@ export class NoteSaveQueue {
   }
 
   async flush(keepalive = false, drainPending = true) {
-    if (!this.valid()) return;
+    if (!this.valid() || this.inaccessible || this.baselineUntrusted || cacheBaselineUnsafe(this.noteId)) return;
     // A mount/cleanup flush with no work must not capture edits enqueued later
     // while yielding to IndexedDB (notably React StrictMode's effect replay).
     if (!this.hasUnsaved()) return;
@@ -134,7 +151,7 @@ export class NoteSaveQueue {
     if (!this.valid()) return;
     if (this.running || (!this.failed && !this.pending)) return;
     this.running = true;
-    while (this.valid() && (this.failed || this.pending)) {
+    while (this.valid() && !this.inaccessible && !this.baselineUntrusted && !cacheBaselineUnsafe(this.noteId) && (this.failed || this.pending)) {
       const current = this.failed ?? this.pending!;
       if (this.failed) this.failed = undefined;
       else this.pending = undefined;
@@ -162,6 +179,7 @@ export class NoteSaveQueue {
         this.report(this.pending ? "dirty" : "saved", result.note);
         if (!drainPending) break;
       } catch (error) {
+        if ((error as { status?: number }).status === 404) this.inaccessible = true;
         this.failed = current;
         const typed = error as Error & { status?: number };
         this.report(typed.status === 409 ? "conflict" : "error", undefined, typed);

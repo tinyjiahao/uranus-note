@@ -1,8 +1,9 @@
+import { NOTE_REPRESENTATION_VERSION, noteEtag, matchesNoteEtag } from "../../shared/noteCache";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createNoteSchema, patchNoteSchema } from "../../shared/validation";
 import { ApiError } from "../lib/http";
-import { changeDeletedState, createManualVersion, createNote, getNote, getVersion, listNotes, listVersions, patchNote, restoreVersion } from "../services/notes";
+import { changeDeletedState, createManualVersion, createNote, getNote, getVisibleNoteRevision, getVersion, listNotes, listVersions, patchNote, restoreVersion } from "../services/notes";
 import type { Env, AppVariables } from "../types";
 import { getNoteStats } from "../services/noteStats";
 import { queueEmptyTrash, queueHardDelete } from "../services/maintenance";
@@ -17,6 +18,7 @@ const idOf = (value: string, label = "笔记") => {
 const revisionOperationSchema = z.object({ operation_id: z.string().uuid(), expected_revision: z.number().int().positive() });
 
 noteRoutes.get("/", async (c) => {
+  c.header("X-Note-Representation-Version", NOTE_REPRESENTATION_VERSION);
   const query = c.req.query();
   if (query.ids !== undefined && (query.ids.length > RECENT_NOTE_LIMIT * 17 || !/^\d+(,\d+)*$/.test(query.ids))) {
     throw new ApiError(400, "INVALID_ID", "笔记 ID 列表无效");
@@ -47,7 +49,24 @@ noteRoutes.post("/empty-trash", async (c) => {
 });
 
 noteRoutes.get("/:id/stats", async (c) => c.json(await getNoteStats(c.env.DB, idOf(c.req.param("id")), c.get("accountSession"))));
-noteRoutes.get("/:id", async (c) => c.json(await getNote(c.env.DB, idOf(c.req.param("id")), c.get("accountSession"))));
+noteRoutes.get("/:id", async (c) => {
+  const id = idOf(c.req.param("id"));
+  const session = c.get("accountSession");
+  const condition = c.req.header("If-None-Match");
+  c.header("X-Note-Representation-Version", NOTE_REPRESENTATION_VERSION);
+  c.header("Cache-Control", "no-store");
+  if (condition) {
+    const revision = await getVisibleNoteRevision(c.env.DB, id, session);
+    const etag = noteEtag(session?.user.id ?? "", id, revision);
+    if (matchesNoteEtag(condition, etag)) {
+      c.header("ETag", etag);
+      return c.body(null, 304);
+    }
+  }
+  const note = await getNote(c.env.DB, id, session);
+  c.header("ETag", noteEtag(session?.user.id ?? "", id, note.revision));
+  return c.json(note);
+});
 noteRoutes.patch("/:id", async (c) => {
   const parsed = patchNoteSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "保存请求无效");

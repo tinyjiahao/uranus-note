@@ -58,3 +58,9 @@
 ## 用户级任务与运维
 
 GET /api/maintenance/jobs/:id 和 POST /api/maintenance/jobs/:id/retry 仅限当前用户任务。全库 mode/backup/restore/attachments 维护接口已移除，默认 admin 也没有全库权限。所有业务路径、列表、搜索、版本、附件和幂等回执按会话 user_id 授权；越权返回统一 404。
+
+## v11 笔记详情条件读取
+
+`GET /api/notes/:id` 返回 `ETag` 和 `X-Note-Representation-Version`。同一账号、笔记、revision 和表示格式下，携带匹配 `If-None-Match` 的请求返回无正文的 304；条件校验仍先执行会话和用户归属校验，软删除沿用回收站可见性，purge_pending 返回 404。200/304 均保持 `Cache-Control: no-store`。
+
+普通笔记列表也返回相同的表示格式响应头，供客户端复用列表条目的 revision；列表没有 ETag 或额外版本计数。客户端仅在本次身份激活已完成该笔记首次无条件详情校验后，才允许使用 60 秒有效期、列表版本或详情条件请求。缓存清理只影响本机服务器副本，草稿与服务器数据不受影响。

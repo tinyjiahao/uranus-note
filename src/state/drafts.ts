@@ -3,7 +3,7 @@ import { type ContentSchemaVersion } from "../../shared/schemaVersion";
 import type { ContentNode } from "../../shared/dto";
 import { identity } from "./identity";
 
-export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: ContentSchemaVersion; editSequence: number; updatedAt: number; content: ContentNode; legacy?: boolean };
+export type Draft = { noteId: number; baseRevision: number; contentSchemaVersion: ContentSchemaVersion; editSequence: number; updatedAt: number; content: ContentNode; legacy?: boolean; baselineUntrusted?: boolean };
 const DB_NAME = "uranus-drafts";
 const STORE = "drafts";
 
@@ -26,7 +26,7 @@ export async function putDraft(draft: Draft, userId = identity().userId): Promis
     const existing = store.get(draft.noteId);
     existing.onsuccess = () => {
       const current = existing.result as Draft | undefined;
-      if (!current || current.editSequence < draft.editSequence || (current.editSequence === draft.editSequence && current.baseRevision <= draft.baseRevision)) { store.put(draft); stored = true; }
+      if (!current || current.editSequence < draft.editSequence || (current.editSequence === draft.editSequence && current.baseRevision <= draft.baseRevision)) { store.put({ ...draft, ...(current?.baselineUntrusted ? { baselineUntrusted: true } : {}) }); stored = true; }
     };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -69,4 +69,17 @@ export async function clearDrafts(userId = identity().userId): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
   db.close();
+}
+
+/** Preserve recovery safety even if disposable server caches are cleared later. */
+export async function markDraftBaselineUntrusted(noteId: number, userId: string) {
+  const db = await openDatabase(userId);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite"), store = tx.objectStore(STORE);
+      const request = store.get(noteId);
+      request.onsuccess = () => { const draft = request.result as Draft | undefined; if (draft) store.put({ ...draft, baselineUntrusted: true }); };
+      tx.oncomplete = () => resolve(); tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
 }

@@ -1,3 +1,4 @@
+import { readConfirmedNote, beginCacheWrite, confirmCacheWrite, rememberListVersions, clearNoteCache, retryPendingCacheCleanup, type CacheReadOptions } from "../state/noteCache";
 import { t } from "../state/locale";
 import { CURRENT_SCHEMA_VERSION } from "../../shared/schemaVersion";
 import type { ApiErrorBody, FolderDto, NoteDetail, NoteListItem, NoteStatsDto, PageDto } from "../../shared/dto";
@@ -6,6 +7,8 @@ import { activateIdentity, identity, identityMatches, lockIdentity, notifyAccoun
 import { afterActiveRequest, waitForSessionActivity } from "../state/sessionActivity";
 
 let csrfToken = "";
+let sessionExpiresAt = 0;
+const rememberedUserIds = new Set<string>();
 export const setCsrfToken = (value: string) => { csrfToken = value; };
 
 export class ApiClientError extends Error {
@@ -21,9 +24,16 @@ function forwardAbort(signal: AbortSignal | null | undefined, controller: AbortC
   return () => signal?.removeEventListener("abort", abort);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+type ResponseCapture = { response?: Response; startedAt?: number; allow304?: boolean; active?: boolean };
+async function request<T>(path: string, init: RequestInit = {}, capture?: ResponseCapture): Promise<T> {
   const expected = identity();
   if (!expected.userId && !["/api/session", "/api/register", "/api/account/switch", "/api/account/sessions"].includes(path)) throw new ApiClientError(401, "UNAUTHENTICATED", t("请重新登录"));
+  const isWrite = !!init.method && !["GET", "HEAD"].includes(init.method.toUpperCase());
+  const notePath = /^\/api\/notes\/(\d+)(?:\/|\?|$)/.exec(path);
+  const ticket = isWrite && (/^\/api\/(notes|import)(\/|$)/.test(path) || /^\/api\/folders\/\d+$/.test(path) && init.method === "DELETE") ? await beginCacheWrite(notePath ? Number(notePath[1]) : undefined) : undefined;
+  if (!identityMatches(expected)) throw new ApiClientError(401, "IDENTITY_CHANGED", t("账号状态已变化"));
+  const startedAt = Date.now();
+  if (capture) capture.startedAt = startedAt;
   const controller = new AbortController();
   const untrack = trackRequest(controller);
   const headers = new Headers(init.headers);
@@ -33,15 +43,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const stopForwarding = forwardAbort(init.signal, controller);
   try {
   const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: controller.signal });
-  const body = await response.json().catch(() => ({})) as T | ApiErrorBody;
+  if (capture) capture.response = response;
+  const body = (response.status === 304 ? undefined : await response.json().catch(() => ({}))) as T | ApiErrorBody;
   if (!identityMatches(expected)) throw new ApiClientError(401, "IDENTITY_CHANGED", t("账号状态已变化"));
-  if (!response.ok) {
+  if (!response.ok && !(response.status === 304 && capture?.allow304)) {
     if (response.status === 401 && (path !== "/api/session" || init.method === "DELETE")) lockIdentity();
     const error = body as ApiErrorBody;
     throw new ApiClientError(response.status, error.error?.code ?? "HTTP_ERROR", error.error?.message ?? t("请求失败 ({0})", response.status), error);
   }
-  if (expected.userId && /^\/api\/(notes|folders|attachments|import)(\/|\?|$)/.test(path)) {
-    afterActiveRequest(`${expected.userId}:${expected.epoch}`, async () => (await request<{ expiresAt: number }>("/api/session/activity", { method: "POST", signal: AbortSignal.timeout(10_000) })).expiresAt);
+  if (capture?.active !== false && expected.userId && /^\/api\/(notes|folders|attachments|import)(\/|\?|$)/.test(path)) {
+    afterActiveRequest(`${expected.userId}:${expected.epoch}`, async () => { sessionExpiresAt = (await request<{ expiresAt: number }>("/api/session/activity", { method: "POST", signal: AbortSignal.timeout(10_000) })).expiresAt; return sessionExpiresAt; });
+  }
+  if (path.startsWith("/api/notes?") && !isWrite) rememberListVersions((body as PageDto<NoteListItem>).items, startedAt, response.headers.get("X-Note-Representation-Version") ?? "", expected);
+  if (ticket) {
+    const candidate = body as NoteDetail & { note?: NoteDetail };
+    const note = candidate.note ?? candidate;
+    if (note?.content && typeof note.revision === "number") void confirmCacheWrite(note, ticket, startedAt);
+    if ((path.includes("?hard=1") || path === "/api/notes/empty-trash" || /^\/api\/folders\/\d+$/.test(path) && init.method === "DELETE") && expected.userId) await clearNoteCache(expected.userId, path.includes("?hard=1") && notePath ? Number(notePath[1]) : undefined).catch(() => {});
   }
   return body as T;
   } finally { stopForwarding(); untrack(); }
@@ -50,23 +68,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export type Session = { authenticated: boolean; csrfToken?: string; expiresAt?: number; user?: AccountIdentity; defaultDataOwner?: boolean; registrationEnabled?: boolean };
 export async function getSession(): Promise<Session> {
   const session = await request<Session>("/api/session");
+  sessionExpiresAt = session.expiresAt ?? 0;
+  if (session.user) rememberedUserIds.add(session.user.id);
   setCsrfToken(session.csrfToken ?? "");
   activateIdentity(session.authenticated ? session.user?.id ?? null : null);
+  if (session.user) void retryPendingCacheCleanup(session.user.id);
   return session;
 }
 export async function login(email: string, password: string): Promise<Session> {
   await waitForSessionActivity();
   const session = await request<Session>("/api/session", { method: "POST", body: JSON.stringify({ email, password }) });
+  sessionExpiresAt = session.expiresAt ?? 0;
+  if (session.user) rememberedUserIds.add(session.user.id);
   setCsrfToken(session.csrfToken ?? "");
   activateIdentity(session.user?.id ?? null); notifyAccountChange();
   return session;
 }
-export async function logout() { await waitForSessionActivity(); const result = await request<Session>("/api/session", { method: "DELETE" }); setCsrfToken(""); lockIdentity(true); return result; }
-export const rememberedAccounts = () => request<{ accounts: { user: AccountIdentity; expiresAt: number; current: boolean }[]; limit: number; switchToken: string }>("/api/account/sessions");
-export async function forgetAccount(userId: string) { await waitForSessionActivity(); return request("/api/account/forget", { method: "POST", body: JSON.stringify({ userId }) }); }
+export async function logout() { await rememberedAccounts().catch(() => {}); await waitForSessionActivity(); const result = await request<Session>("/api/session", { method: "DELETE" }); setCsrfToken(""); lockIdentity(true); await Promise.all([...rememberedUserIds].map(user => clearNoteCache(user).catch(() => {}))); rememberedUserIds.clear(); return result; }
+export const rememberedAccounts = async () => { const result = await request<{ accounts: { user: AccountIdentity; expiresAt: number; current: boolean }[]; limit: number; switchToken: string }>("/api/account/sessions"); result.accounts.forEach(account => rememberedUserIds.add(account.user.id)); return result; };
+export async function forgetAccount(userId: string) { await waitForSessionActivity(); const result = await request("/api/account/forget", { method: "POST", body: JSON.stringify({ userId }) }); await clearNoteCache(userId).catch(() => {}); rememberedUserIds.delete(userId); return result; }
 export async function switchAccount(userId: string, switchToken: string) {
   await waitForSessionActivity();
   const session = await request<Session>("/api/account/switch", { method: "POST", headers: { "X-Account-Switch-Token": switchToken }, body: JSON.stringify({ userId }) });
+  sessionExpiresAt = session.expiresAt ?? 0;
+  if (session.user) rememberedUserIds.add(session.user.id);
   setCsrfToken(session.csrfToken ?? ""); activateIdentity(session.user?.id ?? null); notifyAccountChange();
   return session;
 }
@@ -92,7 +117,14 @@ export function listNotes(filters: NoteFilters = {}, page = 1, signal?: AbortSig
   if (filters.q?.trim()) params.set("q", filters.q.trim());
   return request<PageDto<NoteListItem>>(`/api/notes?${params}`, signal ? { signal } : {});
 }
-export const getNote = (id: number, signal?: AbortSignal) => request<NoteDetail>(`/api/notes/${id}`, signal ? { signal } : {});
+export const getNote = async (id: number, signal?: AbortSignal, options: CacheReadOptions = {}) => {
+  if (sessionExpiresAt && Date.now() >= sessionExpiresAt) { const session = await getSession(); if (!session.authenticated) lockIdentity(); }
+  return readConfirmedNote(id, async (etag, requestSignal) => {
+    const capture: ResponseCapture = { allow304: true, active: !options.background };
+    const note = await request<NoteDetail>(`/api/notes/${id}`, { signal: requestSignal, ...(etag ? { headers: { "If-None-Match": etag } } : {}) }, capture);
+    return { status: capture.response!.status as 200 | 304, note, etag: capture.response!.headers.get("ETag"), representationVersion: capture.response!.headers.get("X-Note-Representation-Version") ?? "", startedAt: capture.startedAt! };
+  }, signal, options);
+};
 export const createNote = (folderId?: number) => request<NoteDetail>("/api/notes", {
   method: "POST", body: JSON.stringify({ operation_id: uuidv7(), ...(folderId ? { folder_id: folderId } : {}), content_schema_version: CURRENT_SCHEMA_VERSION }),
 });

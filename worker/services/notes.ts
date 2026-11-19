@@ -35,6 +35,13 @@ export async function getNote(db: D1Database, id: number, session?: AccountSessi
   return detail(row);
 }
 
+/** Same visibility predicate as getNote; soft-deleted notes retain recycle-bin access. */
+export async function getVisibleNoteRevision(db: D1Database, id: number, session?: AccountSession): Promise<number> {
+  const row = await db.prepare("SELECT revision FROM uranus_notes WHERE id = ? AND user_id IS ? AND purge_pending = 0").bind(id, session?.user.id ?? null).first<{ revision: number }>();
+  if (!row) throw new ApiError(404, "NOTE_NOT_FOUND", "笔记不存在");
+  return row.revision;
+}
+
 export type ListOptions = { ids?: number[] | undefined; folderId?: number | undefined; starred?: boolean | undefined; deleted?: boolean | undefined; q?: string | undefined; sortBy?: string | undefined; sortDir?: string | undefined; page?: number | undefined; pageSize?: number | undefined };
 
 export async function listNotes(db: D1Database, options: ListOptions, session?: AccountSession): Promise<PageDto<NoteListItem>> {

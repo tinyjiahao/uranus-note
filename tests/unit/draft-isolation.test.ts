@@ -12,3 +12,11 @@ it("isolates the same note id by stable user identity", async () => {
   expect(await getDraft(1, "a", true)).toBeUndefined();
   await expect(putDraft(draft, null)).rejects.toThrow("未登录");
 });
+
+it("keeps a restored draft's untrusted baseline across later draft writes", async () => {
+  const { markDraftBaselineUntrusted } = await import("../../src/state/drafts");
+  const draft = { noteId: 8, baseRevision: 3, contentSchemaVersion: 5 as const, editSequence: 1, updatedAt: 1, content: { type: "doc", content: [{ type: "paragraph" }] } };
+  await putDraft(draft, "a"); await markDraftBaselineUntrusted(8, "a");
+  await putDraft({ ...draft, editSequence: 2 }, "a");
+  expect((await getDraft(8, "a"))?.baselineUntrusted).toBe(true);
+});

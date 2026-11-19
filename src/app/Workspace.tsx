@@ -1,7 +1,8 @@
+import { cacheBaselineUnsafe, acceptCacheBaseline, installCacheNotifications } from "../state/noteCache";
 import { t, useLocale } from "../state/locale";
 import { supportsSchema } from "../../shared/schemaVersion";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { History, ChevronDown, ChevronLeft, FilePlus2, FileUp, Folder, FolderPlus, LayoutPanelLeft, List, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pin, Search, Settings as SettingsIcon, Star, Sun, Trash2 } from "lucide-react";
+import { RefreshCw, History, ChevronDown, ChevronLeft, FilePlus2, FileUp, Folder, FolderPlus, LayoutPanelLeft, List, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pin, Search, Settings as SettingsIcon, Star, Sun, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import type { NoteDetail, NoteListItem } from "../../shared/dto";
@@ -16,7 +17,7 @@ import { getSession, login, switchAccount } from "../api/client";
 import { Popup, closePopups, pointAnchor, type PopupAnchor } from "../components/Popup";
 import { patchNote, type NotePatch } from "../api/client";
 import { createFolder, createNote, createNoteWithContent, deleteFolder, emptyTrash, getNote, hardDeleteNote, importMarkdown, listFolders, listNotes, logout, removeNote, renameFolder, restoreNote, type ApiClientError, type NoteFilters } from "../api/client";
-import { clearDrafts, deleteDraftIfSequence, getDraft, type Draft } from "../state/drafts";
+import { clearDrafts, deleteDraftIfSequence, getDraft, markDraftBaselineUntrusted, type Draft } from "../state/drafts";
 import { NoteSaveQueue } from "../state/saveQueue";
 import { activateIdentity, notifyAccountChange } from "../state/identity";
 import { noteTime, useUiStore } from "../state/ui";
@@ -28,6 +29,21 @@ import { getMaintenanceJob, retryMaintenanceJob } from "../api/client";
 import { markNoteOpened, readReadingHistory } from "../state/readingHistory";
 
 type Scope = { kind: "none" | "all" | "starred" | "trash" | "folder" | "recent"; folderId?: number };
+
+// Keep transient cache reads separate from save status and editor rendering.
+// Fast network validations need no flashing banner; slow previews stay explicitly read-only.
+function CacheReadStatus({ checking, failed }: { checking: boolean; failed: boolean }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!checking) return;
+    const timer = window.setTimeout(() => setSlow(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [checking]);
+  if (!failed && !(checking && slow)) return null;
+  const message = t(failed ? "本地副本，暂未确认最新" : "正在检查更新");
+  return <span className={`note-cache-status${failed ? " status-error" : ""}`} role="status" title={message}>{message}</span>;
+}
 
 export function Workspace({ user, defaultDataOwner }: { user: import("../../shared/account").AccountIdentity; defaultDataOwner: boolean }) {
   useLocale();
@@ -67,6 +83,7 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
   const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId;
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [draftCandidate, setDraftCandidate] = useState<Draft>();
+  const draftCandidateRef = useRef(draftCandidate); draftCandidateRef.current = draftCandidate;
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [titleHost, setTitleHost] = useState<HTMLDivElement | null>(null);
   const [modeHost, setModeHost] = useState<HTMLSpanElement | null>(null);
@@ -209,8 +226,54 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     return () => cancelAnimationFrame(frame);
   }, [listKey, selectedId, layout, notes.data]);
   useEffect(() => { closePopups(); setNoteMenu(null); setMoveMenu(false); }, [selectedId]);
-  const selected = useQuery({ queryKey: ["user", user.id, "note", selectedId], queryFn: ({ signal }) => getNote(selectedId!, signal), enabled: Number.isSafeInteger(selectedId) });
-  const selectedNote = selected.data;
+  const [cachedPreview, setCachedPreview] = useState<NoteDetail>();
+  const [checkingPreview, setCheckingPreview] = useState<{ id: number; visit: number }>();
+  const [serverUpdate, setServerUpdate] = useState<NoteDetail>();
+  const [confirmedOpen, setConfirmedOpen] = useState<{ id: number; visit: number }>();
+  const visit = useRef({ id: selectedId, sequence: 0 });
+  if (visit.current.id !== selectedId) { visit.current = { id: selectedId, sequence: visit.current.sequence + 1 }; }
+  const forceValidation = useRef(false);
+  const backgroundValidation = useRef(false);
+  const selected = useQuery({ queryKey: ["user", user.id, "note", selectedId], queryFn: async ({ signal }) => {
+    const visitSequence = visit.current.sequence;
+    const force = forceValidation.current; forceValidation.current = false;
+    const background = backgroundValidation.current; backgroundValidation.current = false;
+    try {
+      const note = await getNote(selectedId!, signal, { force, background, preview: cached => {
+        if (!signal.aborted && selectedIdRef.current === cached.id && visit.current.sequence === visitSequence) {
+          setCachedPreview(cached);
+          setCheckingPreview({ id: cached.id, visit: visitSequence });
+        }
+      } });
+      if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+      const shownContent = queues.current.get(note.id)?.localContent() ?? queryClient.getQueryData<NoteDetail>(["user", user.id, "note", note.id])?.content;
+      if (JSON.stringify(shownContent) !== JSON.stringify(note.content)) setServerUpdate(note);
+      queues.current.get(note.id)?.observeServer(note);
+      if (cacheBaselineUnsafe(note.id)) {
+        await markDraftBaselineUntrusted(note.id, user.id).catch(() => {});
+        if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+        setDraftCandidate(draft => draft?.noteId === note.id ? { ...draft, baselineUntrusted: true } : draft);
+        setConflictLatest(note);
+      }
+      if (selectedIdRef.current === note.id && visit.current.sequence === visitSequence) setConfirmedOpen({ id: note.id, visit: visitSequence });
+      return note;
+    } catch (error) {
+      if ((error as ApiClientError).status === 404) { queues.current.get(selectedId!)?.stopInaccessible(); setCachedPreview(undefined); }
+      throw error;
+    }
+  }, enabled: Number.isSafeInteger(selectedId), retry: false, staleTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
+  const unavailable = (selected.error as ApiClientError | null)?.status === 404 || (selected.error as ApiClientError | null)?.status === 401;
+  const selectedNote = unavailable ? undefined : selected.data ?? (cachedPreview?.id === selectedId ? cachedPreview : undefined);
+  const cacheGate = confirmedOpen?.id !== selectedId || confirmedOpen?.visit !== visit.current.sequence;
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible" && selectedIdRef.current) { backgroundValidation.current = true; void selected.refetch(); } };
+    const stop = installCacheNotifications(id => {
+      void queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"], refetchType: "none" });
+      if (id === undefined || id === selectedIdRef.current) refresh();
+    });
+    window.addEventListener("focus", refresh); window.addEventListener("online", refresh); document.addEventListener("visibilitychange", refresh);
+    return () => { stop(); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); document.removeEventListener("visibilitychange", refresh); };
+  }, [selectedId, user.id, queryClient]);
   const openedId = selectedNote && selectedNote.deletedAt === null ? selectedNote.id : undefined;
   useEffect(() => {
     if (openedId !== undefined) setRecentIds(markNoteOpened(user.id, openedId));
@@ -300,7 +363,9 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
   const openNoteMenu = (note: NoteListItem, anchor: PopupAnchor, workspace = false) => { setNoteMenu({ note, anchor, workspace }); setMoveMenu(false); };
   const manageNote = async (patch: NotePatch | "delete" | "restore" | "permanent") => {
     if (!noteMenu || menuBusy) return;
-    const target = noteMenu.note; setMenuBusy(true);
+    const target = noteMenu.note;
+    if (target.id === selectedId && cacheGate) { setNotice(t("正在检查更新")); return; }
+    setMenuBusy(true);
     try {
       const existingQueue = queues.current.get(target.id);
       if (existingQueue) { await existingQueue.flush(); if (existingQueue.hasUnsaved()) throw new Error(t("请先解决目标笔记的保存问题")); }
@@ -395,11 +460,15 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           <button className="back-to-list" aria-label={t("返回笔记列表")} onClick={() => backToList(selectedNote)}><ChevronLeft /></button>
           {layout !== "three" && <button aria-label={t("三栏视图")} onClick={() => setLayout("three")}><LayoutPanelLeft /></button>}
           {layout === "three" && <button aria-label={t("收起侧栏")} onClick={() => setLayout("two")}><PanelLeftClose /></button>}
-          <div className="note-identity"><div ref={setTitleHost} className="note-title-host" /><SaveFeedback signals={saveSignals} id={selectedNote.id} /></div>
+          <div className="note-identity"><div ref={setTitleHost} className="note-title-host" />
+            {!cacheGate && <SaveFeedback signals={saveSignals} id={selectedNote.id} />}
+            <CacheReadStatus key={`${selectedNote.id}-${visit.current.sequence}`} checking={cacheGate && selected.isFetching && checkingPreview?.id === selectedId && checkingPreview?.visit === visit.current.sequence} failed={Boolean(selected.error) && !selected.isFetching} />
+          </div>
+          <button className="note-refresh" aria-label={t("检查笔记更新")} title={t("检查笔记更新")} disabled={selected.isFetching} onClick={() => { forceValidation.current = true; backgroundValidation.current = false; void selected.refetch(); }}><RefreshCw aria-hidden="true" /></button>
           <span ref={setModeHost} className="mode-host" />
-          <button className={selectedNote.pinned ? "active" : ""} title={t("置顶")} onClick={() => queueFor(selectedNote).enqueue({ pinned: !selectedNote.pinned }, 0)}><Pin /></button>
-          <button className={selectedNote.starred ? "active" : ""} title={t("星标")} aria-pressed={selectedNote.starred} onClick={() => queueFor(selectedNote).enqueue({ starred: !selectedNote.starred }, 0)}><Star fill={selectedNote.starred ? "currentColor" : "none"} /></button>
-          {!selectedNote.deletedAt && <select className="folder-select" aria-label={t("移动到文件夹")} value={selectedNote.folderId} onChange={(event) => queueFor(selectedNote).enqueue({ folder_id: Number(event.target.value) }, 0)}>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
+          <button disabled={cacheGate} className={selectedNote.pinned ? "active" : ""} title={t("置顶")} onClick={() => queueFor(selectedNote).enqueue({ pinned: !selectedNote.pinned }, 0)}><Pin /></button>
+          <button disabled={cacheGate} className={selectedNote.starred ? "active" : ""} title={t("星标")} aria-pressed={selectedNote.starred} onClick={() => queueFor(selectedNote).enqueue({ starred: !selectedNote.starred }, 0)}><Star fill={selectedNote.starred ? "currentColor" : "none"} /></button>
+          {!selectedNote.deletedAt && <select disabled={cacheGate} className="folder-select" aria-label={t("移动到文件夹")} value={selectedNote.folderId} onChange={(event) => queueFor(selectedNote).enqueue({ folder_id: Number(event.target.value) }, 0)}>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
           <button title={t("版本历史")} aria-label={t("版本历史")} aria-expanded={versionsOpen} onClick={() => setVersionsOpen((value) => !value)}><History /></button>
           <button className="note-more" aria-label={t("笔记更多")} aria-haspopup="dialog" onClick={event => openNoteMenu(selectedNote, event.currentTarget, true)}><MoreHorizontal /></button>
         </header>
@@ -407,12 +476,12 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
         {copyText && <div className="draft-banner"><label>{t("请手工选择并复制")}<textarea aria-label={t("未保存内容")} readOnly value={copyText} onFocus={e => e.currentTarget.select()} /></label><button onClick={() => setCopyText("")}>{t("关闭")}</button></div>}
         {draftCandidate && <div className="draft-banner"><span>{t("发现")} {new Date(draftCandidate.updatedAt).toLocaleString()} {t("的本机未提交草稿")}{draftCandidate.baseRevision !== selectedNote.revision ? t("；服务器版本已改变") : ""}。</span><button onClick={() => {
           try { if (!supportsSchema(draftCandidate.contentSchemaVersion)) throw new Error(t("草稿版本不受支持，请升级应用")); validateAndDeriveContent(draftCandidate.content, draftCandidate.contentSchemaVersion); } catch (error) { setNotice((error as Error).message); return; }
-          if (draftCandidate.baseRevision !== selectedNote.revision) { setNotice(t("服务器版本已改变，请先保留或复制本机草稿，不能直接覆盖服务器")); setCopyText(JSON.stringify(draftCandidate.content, null, 2)); return; }
+          if (cacheGate || draftCandidate.baselineUntrusted || cacheBaselineUnsafe(selectedNote.id) || draftCandidate.baseRevision !== selectedNote.revision) { setNotice(t("服务器版本已改变，请先保留或复制本机草稿，不能直接覆盖服务器")); setCopyText(JSON.stringify(draftCandidate.content, null, 2)); return; }
           const local = { ...selectedNote, content: draftCandidate.content };
           queryClient.setQueryData(["user", user.id, "note", selectedNote.id], local);
           queueFor(selectedNote).enqueue({ content: draftCandidate.content as Record<string, unknown> }, 0);
           setDraftCandidate(undefined); setEditorEpoch((value) => value + 1);
-        }}>{t("加载本地草稿")}</button><button onClick={() => { void deleteDraftIfSequence(draftCandidate.noteId, draftCandidate.editSequence, user.id, draftCandidate.legacy); setDraftCandidate(undefined); }}>{t("使用服务器版")}</button></div>}
+        }}>{t("加载本地草稿")}</button><button onClick={() => { acceptCacheBaseline(selectedNote.id); void deleteDraftIfSequence(draftCandidate.noteId, draftCandidate.editSequence, user.id, draftCandidate.legacy); setDraftCandidate(undefined); }}>{t("使用服务器版")}</button></div>}
         {conflictLatest?.id === selectedNote.id && <div className="draft-banner conflict-banner"><span>{t("此笔记已在其他标签页或设备更新。选择服务器版会放弃本机未提交内容；也可把本机内容复制成新笔记。")}</span><button onClick={() => {
           queueFor(selectedNote).resolveWithServer(conflictLatest.revision); queryClient.setQueryData(["user", user.id, "note", selectedNote.id], conflictLatest); setConflictLatest(undefined); setEditorEpoch((value) => value + 1);
         }}>{t("使用服务器版")}</button><button onClick={async () => {
@@ -420,8 +489,8 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
           const copy = await createNoteWithContent(selectedNote.folderId, content as Record<string, unknown>);
           queue.resolveWithServer(conflictLatest.revision); queryClient.setQueryData(["user", user.id, "note", selectedNote.id], conflictLatest); setConflictLatest(undefined); await queryClient.invalidateQueries(); navigate(`/notes/${copy.id}`);
         }}>{t("复制本机内容")}</button></div>}
-        <NoteEditor key={`${selectedNote.id}-${editorEpoch}`} note={selectedNote} readingUserId={user.id} titleHost={titleHost} modeHost={modeHost} readOnlyBecauseDeleted={selectedNote.deletedAt !== null} onUploadState={uploading => saveSignals.update(selectedNote.id, { uploading })} onChange={(content) => queueFor(selectedNote).enqueue({ content: content as Record<string, unknown> })} onFlush={() => queueFor(selectedNote).flush()} onPersistLocal={() => queueFor(selectedNote).persistLocal()} />
-        {versionsOpen && <VersionPanel userId={user.id} note={selectedNote} beforeAction={async () => { const queue = queueFor(selectedNote); await queue.flush(); if (queue.hasUnsaved()) throw new Error(t("请先解决正文保存问题")); }} onClose={() => setVersionsOpen(false)} onRestored={async (restored) => { queues.current.delete(restored.id); queryClient.setQueryData(["user", user.id, "note", restored.id], restored); setEditorEpoch(value => value + 1); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"] }); setVersionsOpen(false); }} />}
+        <NoteEditor key={`${selectedNote.id}-${editorEpoch}`} note={selectedNote} readingUserId={user.id} titleHost={titleHost} modeHost={modeHost} readOnlyBecauseDeleted={selectedNote.deletedAt !== null} validationReadOnly={cacheGate} serverContent={serverUpdate?.id === selectedNote.id ? serverUpdate.content : undefined} canApplyServer={() => !queues.current.get(selectedNote.id)?.hasUnsaved() && !draftCandidateRef.current} onUploadState={uploading => saveSignals.update(selectedNote.id, { uploading })} onChange={(content) => queueFor(selectedNote).enqueue({ content: content as Record<string, unknown> })} onFlush={() => queueFor(selectedNote).flush()} onPersistLocal={() => queueFor(selectedNote).persistLocal()} />
+        {versionsOpen && <VersionPanel userId={user.id} note={selectedNote} beforeAction={async () => { if (cacheGate) throw new Error(t("正在检查更新")); const queue = queueFor(selectedNote); await queue.flush(); if (queue.hasUnsaved()) throw new Error(t("请先解决正文保存问题")); }} onClose={() => setVersionsOpen(false)} onRestored={async (restored) => { queues.current.delete(restored.id); queryClient.setQueryData(["user", user.id, "note", restored.id], restored); setEditorEpoch(value => value + 1); await queryClient.invalidateQueries({ queryKey: ["user", user.id, "notes"] }); setVersionsOpen(false); }} />}
       </> : selected.error ? <div className="empty-editor"><h2>{t("笔记不存在或无权访问")}</h2></div> : null}
     </section>
     {notice && <div className={`notice${noticeClosing ? " is-leaving" : ""}`} role="status">{notice}{job.data?.status === "failed" && <button onClick={async () => { try { await retryMaintenanceJob(jobId!); setNotice(t("重试任务已入队，正在处理中")); await job.refetch(); } catch (error) { setNotice((error as Error).message); } }}>{t("重试删除任务")}</button>}{deletedNote && <button onClick={() => restoreMutation.mutate(deletedNote)} disabled={restoreMutation.isPending}>{t("撤销")}</button>}<button aria-label={t("关闭提示")} onClick={() => { setNoticeClosing(true); window.setTimeout(() => { setNotice(""); setDeletedNote(undefined); }, 160); }}>×</button></div>}

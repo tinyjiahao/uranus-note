@@ -4,6 +4,8 @@
 
 ## 需求基线
 
+- v11 缓存需求见 `doc/plans/plan_v11.md`：TanStack Query + 独立 IndexedDB 正文缓存，revision 校验及 60 秒有效期，缓存与未同步草稿严格分离；条件请求先鉴权，旧响应不得回退版本或跨账号写回。零新增依赖、schema 与迁移，不增加离线编辑或 Service Worker；v11 不包含列表持久缓存、列表 ETag 或额外列表版本号，不为缓存新增数据库写入。本地实现与自动化验证见 `doc/implementation/implementation-v11.md`；真实 Safari/iOS、IME 和跨设备验收单独记录。
+
 - v10 增量见 `doc/plans/plan_v10.md`。界面支持简体中文与 English，登录页和设置可即时切换，语言仅作为浏览器偏好保存。最近打开与正文滚动位置按账号保存在本机，最多 20 篇，仅记录 ID 和位置，摘要经现有鉴权读取。真实 iPhone PWA 和 IME 验收须与浏览器模拟区分。v10 不新增依赖、内容 schema 或数据库迁移。
 
 - v9 增量见 `doc/plans/plan_v9.md`（V9-01 至 V9-10）：查找替换、首图缩略、代码高亮/JSON 格式化/语言切换、日期时间插入、Markdown 粘贴、无选区复制当前行、菜单去重、短动效与斜杠命令。v9 不新增 content schema 或数据库迁移；唯一依赖例外为按需注册语言的 `lowlight` 与其 `highlight.js`，禁止整包语言表导入，客户端 gzip 增量目标不超过 40KB。Markdown data URI 图片继续走私有附件上传，外链/相对图片不直接生成图片节点。真实剪贴板、IME、Safari/iOS、动效和生产部署未验收前不得宣称完整发布门槛通过。

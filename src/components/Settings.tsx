@@ -1,3 +1,4 @@
+import { cacheEnabled, clearNoteCache, setCacheEnabled } from "../state/noteCache";
 import { t, useLocale } from "../state/locale";
 import { AccountSettings } from "./AccountSettings";
 import { deploymentStatus } from "../api/client";
@@ -24,6 +25,15 @@ export function Settings({ onClose, user, beforeSensitiveChange }: { onClose: ()
   useLocale();
   const dialog = useRef<HTMLDialogElement>(null);
   const ui = useUiStore();
+  const [cacheOn, setCacheOn] = useState(() => cacheEnabled(user.id));
+  const [cacheMessage, setCacheMessage] = useState("");
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const changeCache = async (enabled?: boolean) => {
+    setCacheBusy(true); setCacheMessage("");
+    try { if (enabled === undefined) await clearNoteCache(user.id); else await setCacheEnabled(user.id, enabled); setCacheMessage(t("笔记缓存已清理")); }
+    catch { setCacheMessage(t("缓存清理未完成，请重试")); }
+    finally { setCacheOn(cacheEnabled(user.id)); setCacheBusy(false); }
+  };
   const [syncInput, setSyncInput] = useState(String(ui.syncIntervalSeconds));
   useEffect(() => setSyncInput(String(ui.syncIntervalSeconds)), [ui.syncIntervalSeconds]);
   const status = useQuery({ queryKey: ["user", user.id, "deployment-status"], queryFn: deploymentStatus });
@@ -51,6 +61,12 @@ export function Settings({ onClose, user, beforeSensitiveChange }: { onClose: ()
       }} onBlur={() => setSyncInput(String(ui.syncIntervalSeconds))} /></label>
       <p>{t("默认 30 秒，可设为 5–300 秒。停止输入 0.8 秒后存入本机草稿，持续输入时最多每 3 秒存一次；有改动时按此间隔同步。切换笔记或按 ⌘/Ctrl+S 立即同步。未同步内容仅保存在此浏览器。")}</p>
       <button onClick={() => { if (confirm(t("恢复布局、主题、宽度、字号、排序和同步间隔的默认偏好？笔记和草稿将保留。"))) ui.reset(); }}>{t("恢复默认偏好")}</button>
+    </section>
+    <section><h3>{t("笔记本地缓存")}</h3>
+      <label><input type="checkbox" checked={cacheOn} disabled={cacheBusy} onChange={e => void changeCache(e.target.checked)} />{t("笔记本地缓存")}</label>
+      <p>{t("仅清理服务器副本，不删除笔记、草稿或阅读位置。")}</p>
+      <button disabled={cacheBusy} onClick={() => void changeCache()}>{t("清理笔记缓存")}</button>
+      <p role="status">{cacheMessage}</p>
     </section>
     <AccountSettings user={user} beforeSensitiveChange={beforeSensitiveChange} />
     <details><summary>{t("关于与部署")}</summary>{status.data ? <><p>Uranus {status.data.version}</p><p>{t("配置：")}{status.data.configured ? t("齐全") : t("不完整")}</p></> : <p>{status.error ? t("无法读取服务状态") : t("正在检查服务状态…")}</p>}

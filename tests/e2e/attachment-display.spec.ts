@@ -106,6 +106,19 @@ test("file display defaults to compact and card selection persists", async ({ pa
   await expect(file.locator("small")).toContainText("KB");
   await page.keyboard.press("Escape");
   await expect(actions).toHaveCount(0);
+  const desktopViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 760 });
+  await file.getByRole("button", { name: "附件操作：display.pdf" }).click();
+  await actions.getByRole("button", { name: "预览附件：display.pdf" }).click();
+  const pdfPreview = page.getByRole("dialog", { name: "附件预览：display.pdf" });
+  const openPdf = pdfPreview.getByRole("link", { name: "在新窗口打开 PDF" });
+  await expect(openPdf).toBeVisible();
+  await expect(openPdf).toHaveAttribute("href", /^blob:/);
+  await expect(openPdf).toHaveAttribute("target", "_blank");
+  await expect(pdfPreview.locator("iframe")).toHaveCount(0);
+  await expect(pdfPreview.getByRole("link", { name: "下载附件" })).toHaveAttribute("download", "display.pdf");
+  await pdfPreview.getByRole("button", { name: "关闭预览" }).click();
+  await page.setViewportSize(desktopViewport);
   const attachmentBeforeMove = await page.locator(".prose-editor").evaluate(element => {
     const editor = (element as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
     editor.commands.insertContentAt(editor.state.doc.content.size, { type: "paragraph", content: [{ type: "text", text: "附件拖动目标" }] });

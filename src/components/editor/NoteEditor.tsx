@@ -327,7 +327,7 @@ const AttachmentImage = Image.extend({
 
 const isBlankDoc = (doc: ContentNode) => (doc.content ?? []).every(node => node.type === "paragraph" && !(node.content ?? []).length);
 
-function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal = onFlush, onUploadState, readOnlyBecauseDeleted, titleHost, modeHost }: { note: NoteDetail; readingUserId?: string | undefined; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; onPersistLocal?: () => Promise<void>; onUploadState?: (uploading: boolean) => void; readOnlyBecauseDeleted: boolean; titleHost?: HTMLElement | null; modeHost?: HTMLElement | null }) {
+function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal = onFlush, onUploadState, readOnlyBecauseDeleted, validationReadOnly = false, canApplyServer, serverContent, titleHost, modeHost }: { note: NoteDetail; readingUserId?: string | undefined; onChange: (content: ContentNode) => void; onFlush: () => Promise<void>; onPersistLocal?: () => Promise<void>; onUploadState?: (uploading: boolean) => void; readOnlyBecauseDeleted: boolean; validationReadOnly?: boolean; serverContent?: ContentNode | undefined; canApplyServer?: () => boolean; titleHost?: HTMLElement | null; modeHost?: HTMLElement | null }) {
   const locale = useLocale();
   const callbacks = useRef({ onChange, onPersistLocal }); callbacks.current = { onChange, onPersistLocal };
   const [initialParts] = useState(() => splitNoteTitle(note.content));
@@ -349,7 +349,7 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
   // Phones open existing notes read-only (session-only, never persisted) so a stray tap cannot edit; blank new notes stay editable. Desktop keeps the per-note preference.
   const phone = useRef(window.matchMedia("(max-width: 767px)").matches);
   const [readOnlyPreference, setReadOnly] = useState(() => phone.current ? !isBlankDoc(note.content) : readPreference(preferenceKey) === "1");
-  const readOnly = readOnlyBecauseDeleted || readOnlyPreference;
+  const readOnly = readOnlyBecauseDeleted || validationReadOnly || readOnlyPreference;
   const { widthMode, setWidthMode, editorFontSize } = useUiStore();
   const [tablePicker, setTablePicker] = useState<{ anchor: PopupAnchor; range?: { from: number; to: number } } | null>(null);
   const [editorError, setEditorError] = useState("");
@@ -448,6 +448,28 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
   }), [extensions, initialParts]);
   const editor = useEditor(options);
   const contentRef = useReadingPosition(readingUserId, note.id, !!editor);
+  const serverGuard = useRef(canApplyServer); serverGuard.current = canApplyServer;
+  const titleComposing = useRef(false);
+  useEffect(() => {
+    if (!editor) return;
+    const apply = () => {
+      if (!serverContent || editor.isDestroyed || editor.view.composing || titleComposing.current || serverGuard.current?.() === false) return;
+      const current = joinNoteTitle(titleNode.current, editor.getJSON() as ContentNode);
+      if (JSON.stringify(current) === JSON.stringify(serverContent)) return;
+      const parts = splitNoteTitle(serverContent);
+      const scroll = contentRef.current?.scrollTop;
+      titleNode.current = parts.title; setTitleValue(titleText(parts.title));
+      editor.commands.setContent(parts.body, { emitUpdate: false });
+      if (scroll !== undefined && contentRef.current) contentRef.current.scrollTop = scroll;
+    };
+    const end = () => { queueMicrotask(apply); };
+    const startTitle = () => { titleComposing.current = true; };
+    const endTitle = () => { titleComposing.current = false; queueMicrotask(apply); };
+    const field = titleFieldRef.current;
+    apply(); editor.view.dom.addEventListener("compositionend", end);
+    field?.addEventListener("compositionstart", startTitle); field?.addEventListener("compositionend", endTitle);
+    return () => { editor.view.dom.removeEventListener("compositionend", end); field?.removeEventListener("compositionstart", startTitle); field?.removeEventListener("compositionend", endTitle); };
+  }, [editor, serverContent]);
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
     editor.view.dom.setAttribute("aria-label", t("笔记正文"));
@@ -593,7 +615,7 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
   const alignmentDisabled = (value: string) => readOnly || (!(editor.state.selection instanceof CellSelection) && !editor.isActive("image") && !editor.can().setTextAlign(value));
   const alignmentTarget = editor.state.selection instanceof CellSelection ? t("所选单元格") : editor.isActive("image") ? t("图片") : t("段落或标题");
   const toggleReadOnly = () => {
-    if (readOnlyBecauseDeleted) return;
+    if (readOnlyBecauseDeleted || validationReadOnly) return;
     const next = !readOnly;
     if (!phone.current) writePreference(preferenceKey, next ? "1" : "0");
     setReadOnly(next);
@@ -953,7 +975,7 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
 
 // The editor owns its document until an explicit epoch remount (restore/conflict).
 // Saved query snapshots must not replace live composing DOM or callback options.
-export const NoteEditor = memo(NoteEditorView, (a, b) => a.note.id === b.note.id && a.readingUserId === b.readingUserId && a.titleHost === b.titleHost && a.modeHost === b.modeHost && a.readOnlyBecauseDeleted === b.readOnlyBecauseDeleted);
+export const NoteEditor = memo(NoteEditorView, (a, b) => a.note.id === b.note.id && a.serverContent === b.serverContent && a.validationReadOnly === b.validationReadOnly && a.readingUserId === b.readingUserId && a.titleHost === b.titleHost && a.modeHost === b.modeHost && a.readOnlyBecauseDeleted === b.readOnlyBecauseDeleted);
 
 function ReactiveToolbar({ editor, children }: { editor: Editor; children: () => React.ReactNode }) {
   const subscribe = useMemo(() => (listener: () => void) => { editor.on("transaction", listener); return () => { editor.off("transaction", listener); }; }, [editor]);

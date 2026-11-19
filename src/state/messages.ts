@@ -1,5 +1,13 @@
 // Chinese is the source locale. Only application-owned messages belong here.
 export const english: Readonly<Record<string, string>> = {
+  "正在检查更新": "Checking for updates",
+  "本地副本，暂未确认最新": "Local copy; latest version not yet confirmed",
+  "检查笔记更新": "Check for updates",
+  "笔记本地缓存": "Local note cache",
+  "笔记缓存已清理": "Note cache cleared",
+  "缓存清理未完成，请重试": "Cache cleanup failed. Please retry.",
+  "仅清理服务器副本，不删除笔记、草稿或阅读位置。": "Only server copies are removed. Notes, drafts and reading positions are preserved.",
+  "清理笔记缓存": "Clear note cache",
   "请重新登录": "Please sign in again",
   "账号状态已变化": "The active account has changed",
   "请先登录": "Sign in first",
@@ -583,6 +591,8 @@ export const english: Readonly<Record<string, string>> = {
   "仅显示前 {0} 个字符，完整内容请下载": "Showing the first {0} characters. Download the file for the full content.",
   "附件预览：{0}": "Attachment preview: {0}",
   "PDF 预览：{0}": "PDF preview: {0}",
+  "在新窗口打开 PDF": "Open PDF in a new window",
+  "请在新窗口查看 PDF，也可以下载原文件。": "Open the PDF in a new window, or download the original file.",
   "正在导出 {0}/{1}：{2}": "Exporting {0}/{1}: {2}",
   "附件 {0} 未导出：{1}。未生成不完整的 ZIP。": "Could not export attachment {0}: {1}. No partial ZIP was created.",
   "已导出 {0} 篇笔记及其附件。Markdown 不保证格式往返无损。": "Exported {0} notes and their attachments. Some Markdown formatting may change on reimport.",

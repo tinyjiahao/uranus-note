@@ -252,6 +252,8 @@ select, .table-menu input, .table-picker input { color: var(--text); background:
 .note-title-ellipsis { display: none; }
 .readonly-indicator { flex-shrink: 0; white-space: nowrap; border-radius: 4px; padding: 3px 6px; font-size: 12px; line-height: 18px; color: var(--accent-deep); background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
 .note-identity .save-state { flex: 0 1 112px; min-width: 0; max-width: 45%; text-align: right; margin-right: 8px; }
+.note-cache-status { flex: 0 1 auto; min-width: 0; max-width: 45%; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-cache-status.status-error { color: var(--danger); }
 .note-header-title { display: block; width: 100%; min-width: 0; height: 28px; margin: 0; padding: 3px 5px; resize: none; overflow: auto; border: 1px solid transparent; border-radius: 4px; background: transparent; font: inherit; font-size: 15px; font-weight: 600; line-height: 20px; color: var(--text); }
 .note-header-title:not(:read-only):hover { border-color: var(--line); }
 .note-header-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
@@ -635,6 +637,14 @@ dialog.image-preview::backdrop { background: transparent; }
 .attachment-preview-note { margin: 8px 16px 0; font-size: 12px; }
 .attachment-preview-body pre { flex: 1; margin: 0; padding: 12px 16px 24px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: text; }
 .attachment-preview-body iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+.attachment-pdf-fallback { padding: 16px; }
+.attachment-pdf-fallback p { margin: 0 0 12px; color: var(--muted); }
+.attachment-pdf-fallback a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border-radius: 8px; color: var(--link); background: var(--panel-soft); }
+.attachment-pdf-fallback svg { width: 18px; height: 18px; }
+@media (max-width: 767px), (pointer: coarse) {
+  .attachment-preview > header { padding-top: max(10px, env(safe-area-inset-top)); }
+  .attachment-preview > header :is(button, a) { min-width: 44px; min-height: 44px; }
+}
 @media print { .attachment-preview { display: none !important; } }
 
 /* Gap cursor (caret between adjacent block atoms). Without these rules the marker is an in-flow block and makes inline attachments reflow. */
