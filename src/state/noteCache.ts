@@ -1,5 +1,5 @@
 import type { NoteDetail, NoteListItem } from "../../shared/dto";
-import { NOTE_REPRESENTATION_VERSION } from "../../shared/noteCache";
+import { NOTE_REPRESENTATION_VERSION, sameNoteEtag } from "../../shared/noteCache";
 import { identity, identityMatches, onIdentityChange, identityTabId } from "./identity";
 import { clearStoredCache, loadCache, makeEntry, sameBarrier, storeCache, type Barrier, type CacheEntry } from "./noteCacheStore";
 
@@ -167,7 +167,7 @@ async function read(id: number, transport: CacheTransport, signal: AbortSignal, 
   if (item.write !== write) { if (item.entry) return item.entry.note; cancelled(); }
   if (item.serial !== serial) cancelled();
   // 304 validates precisely the snapshot sent, never a concurrent replacement.
-  if (response.status === 304 && (!candidate || item.entry !== candidate || !sentEtag || response.etag !== sentEtag || response.representationVersion !== candidate.representationVersion)) {
+  if (response.status === 304 && (!candidate || item.entry !== candidate || !sentEtag || !sameNoteEtag(response.etag, sentEtag) || response.representationVersion !== candidate.representationVersion)) {
     response = await fetch(null); check();
     if (response.status === 304) throw new Error("Unexpected 304 without a server copy");
   }

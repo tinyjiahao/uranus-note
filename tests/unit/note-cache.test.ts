@@ -169,3 +169,13 @@ it("retries quota errors once after eviction and rolls back incomplete records",
   expect(attempts).toBe(2); spy.mockRestore();
   expect((await loadCache("a", 1, true)).entry?.note.id).toBe(1);
 });
+
+it("accepts a strong 304 for the weak ETag received on a compressed 200 without a second GET", async () => {
+  const fetch = vi.fn<CacheTransport>()
+    .mockResolvedValueOnce({ ...response(), etag: 'W/"1"' })
+    .mockResolvedValueOnce({ ...response(), status: 304, etag: '"1"' });
+  await readConfirmedNote(1, fetch);
+  expect((await readConfirmedNote(1, fetch, undefined, { force: true })).revision).toBe(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch.mock.calls[1]?.[0]).toBe('W/"1"');
+});
