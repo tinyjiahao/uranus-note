@@ -72,7 +72,8 @@ export function Popup({ anchor, title, hideTitle = false, close, children, back,
         dismiss(); focusTrigger();
       }
     };
-    document.addEventListener("pointerdown", outside); panel.addEventListener("keydown", key);
+    const keyTarget = autoFocus ? panel : document;
+    document.addEventListener("pointerdown", outside); keyTarget.addEventListener("keydown", key as EventListener);
     window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
     window.visualViewport?.addEventListener("resize", place); window.visualViewport?.addEventListener("scroll", place);
     const observer = new ResizeObserver(place); observer.observe(panel);
@@ -80,7 +81,7 @@ export function Popup({ anchor, title, hideTitle = false, close, children, back,
       observer.disconnect(); document.body.style.overflow = oldOverflow;
       owner?.classList.remove("popup-owner");
       window.removeEventListener("uranus-close-popups", dismiss);
-      document.removeEventListener("pointerdown", outside); panel.removeEventListener("keydown", key);
+      document.removeEventListener("pointerdown", outside); keyTarget.removeEventListener("keydown", key as EventListener);
       window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true);
       window.visualViewport?.removeEventListener("resize", place); window.visualViewport?.removeEventListener("scroll", place);
     };

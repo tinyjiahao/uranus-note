@@ -372,7 +372,7 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
   const dropHandler = useRef<(view: import("@tiptap/pm/view").EditorView, event: DragEvent, moved: boolean) => boolean>(() => false);
   const [showRowNumbers, setShowRowNumbers] = useState(() => readPreference("uranus.table.rowNumbers") === "1");
   const [linkDialog, setLinkDialog] = useState<{ from: number; to: number; name: string; href: string; error: string } | null>(null);
-  const [linkActions, setLinkActions] = useState<{ from: number; to: number; href: string; anchor: PopupAnchor } | null>(null);
+  const [linkActions, setLinkActions] = useState<{ from: number; to: number; href: string; anchor: PopupAnchor; keyboard: boolean } | null>(null);
   useEffect(() => { const handler = (event: Event) => setEditorError((event as CustomEvent<string>).detail); window.addEventListener("uranus-editor-error", handler); return () => window.removeEventListener("uranus-editor-error", handler); }, []);
   useEffect(() => { const handler = (event: Event) => setEditorNotice((event as CustomEvent<string>).detail); window.addEventListener("uranus-editor-notice", handler); return () => window.removeEventListener("uranus-editor-notice", handler); }, []);
   const [findOpen, setFindOpen] = useState(false);
@@ -526,7 +526,7 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
       const textNode = anchor.firstChild ?? anchor;
       const position = editor.view.posAtDOM(textNode, 0);
       editor.chain().setTextSelection(position).extendMarkRange("link").run();
-      setLinkActions({ from: editor.state.selection.from, to: editor.state.selection.to, href, anchor });
+      setLinkActions({ from: editor.state.selection.from, to: editor.state.selection.to, href, anchor, keyboard: event.detail === 0 });
     };
     editor.view.dom.addEventListener("click", click);
     return () => editor.view.dom.removeEventListener("click", click);
@@ -961,8 +961,8 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
     </Popup>}
     <TableTools editor={editor} readOnly={readOnly} showRowNumbers={showRowNumbers} onShowRowNumbers={(value) => { setShowRowNumbers(value); writePreference("uranus.table.rowNumbers", value ? "1" : "0"); }} />
     {findOpen && <div className="find-bar"><input autoFocus placeholder={t("在笔记中查找")} value={find} onChange={(event) => { setFind(event.target.value); setFindIndex(0); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && matches) { event.preventDefault(); setFindIndex((value) => event.shiftKey ? value - 1 : value + 1); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} />{!readOnly && <><input placeholder={t("替换为")} value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); replaceCurrent(); } if (event.key === "Escape") { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); } }} /><button disabled={!find || !matches || findTitleActive} title={findTitleActive ? t("标题中的匹配不支持替换") : undefined} onClick={replaceCurrent}>{t("替换")}</button><button disabled={!find || !findBodyCount} onClick={replaceAll}>{t("全部替换")}</button></>}<span>{findTitleActive ? t("标题 ·") + " " : ""}{find ? matches ? `${(findIndex % matches + matches) % matches + 1}/${matches}` : "0/0" : "0/0"}</span><button aria-label={t("上一个匹配")} disabled={!matches} onClick={() => setFindIndex(value => value - 1)}>↑</button><button aria-label={t("下一个匹配")} disabled={!matches} onClick={() => setFindIndex(value => value + 1)}>↓</button><button onClick={() => { setFind(""); setReplaceText(""); setFindOpen(false); editor.commands.focus(); }}>{t("完成")}</button></div>}
-    {linkActions && <Popup className="link-actions-popup" anchor={linkActions.anchor} title={t("链接操作")} close={() => setLinkActions(null)} restoreFocus={() => editor.view.focus()}>
-      <button onClick={() => { const opened = window.open(linkActions.href, "_blank", "noopener,noreferrer"); if (opened) opened.opener = null; }}><ExternalLink aria-hidden="true" /><span>{t("打开链接")}</span></button>
+    {linkActions && <Popup autoFocus={linkActions.keyboard} className="link-actions-popup" anchor={linkActions.anchor} title={t("链接操作")} close={() => setLinkActions(null)} restoreFocus={() => editor.view.focus()}>
+      <button data-initial-focus onClick={() => { const opened = window.open(linkActions.href, "_blank", "noopener,noreferrer"); if (opened) opened.opener = null; }}><ExternalLink aria-hidden="true" /><span>{t("打开链接")}</span></button>
       <button onClick={() => openLinkDialog(linkActions)}><Pencil aria-hidden="true" /><span>{t("编辑链接")}</span></button>
       <button className="link-actions-remove" onClick={() => removeLink(linkActions)}><Unlink aria-hidden="true" /><span>{t("移除链接")}</span></button>
     </Popup>}

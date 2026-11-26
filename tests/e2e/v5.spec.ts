@@ -145,6 +145,8 @@ test("link actions popup is compact and keeps edit/remove behavior", async ({ pa
     await editor.locator("a").click();
     await expect(popup).toBeVisible();
     await expect(popup.locator(".link-actions-url")).toHaveCount(0);
+    await expect(popup.getByRole("button", { name: "关闭菜单" })).not.toBeFocused();
+    await expect(editor).toBeFocused();
     expect((await popup.boundingBox())!.width).toBeLessThanOrEqual(240);
     await expect(popup.getByRole("button", { name: "打开链接" })).toHaveCSS("font-size", "13px");
     await page.keyboard.press("Escape");
