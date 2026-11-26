@@ -206,7 +206,7 @@ export async function patchNote(db: D1Database, id: number, input: PatchInput, s
     for (const attachmentId of attachmentIds) {
       statements.push(db.prepare("INSERT INTO uranus_attachment_refs(attachment_id, note_id, version_id) SELECT ?, ?, id FROM uranus_note_versions WHERE id = ? ON CONFLICT DO NOTHING").bind(attachmentId, id, versionId));
     }
-    statements.push(db.prepare("DELETE FROM uranus_note_versions WHERE note_id = ? AND id NOT IN (SELECT id FROM uranus_note_versions WHERE note_id = ? ORDER BY id DESC LIMIT 30) AND EXISTS (SELECT 1 FROM uranus_notes WHERE id = ? AND last_operation_id = ?)").bind(id, id, id, input.operation_id));
+    statements.push(db.prepare("DELETE FROM uranus_note_versions WHERE note_id = ? AND id NOT IN (SELECT id FROM uranus_note_versions WHERE note_id = ? ORDER BY created_at DESC, id DESC LIMIT 30) AND EXISTS (SELECT 1 FROM uranus_notes WHERE id = ? AND last_operation_id = ?)").bind(id, id, id, input.operation_id));
     statements.push(db.prepare("UPDATE uranus_attachments SET unreferenced_at = COALESCE(unreferenced_at, ?), updated_at = ? WHERE note_id = ? AND status = 'ready' AND NOT EXISTS (SELECT 1 FROM uranus_attachment_refs r WHERE r.attachment_id = uranus_attachments.id) AND EXISTS (SELECT 1 FROM uranus_notes WHERE id = ? AND last_operation_id = ?)").bind(now, now, id, id, input.operation_id));
   }
   statements.push(
@@ -254,7 +254,7 @@ export async function listVersions(db: D1Database, noteId: number, page: number,
   await getNote(db, noteId, session);
   const safePage = Math.max(1, page);
   const safeSize = Math.min(100, Math.max(1, pageSize));
-  const result = await db.prepare("SELECT id, note_id, content_schema_version, title, char_count, source_revision, created_at FROM uranus_note_versions WHERE note_id = ? ORDER BY id DESC LIMIT ? OFFSET ?").bind(noteId, safeSize + 1, (safePage - 1) * safeSize).all();
+  const result = await db.prepare("SELECT id, note_id, content_schema_version, title, char_count, source_revision, created_at FROM uranus_note_versions WHERE note_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").bind(noteId, safeSize + 1, (safePage - 1) * safeSize).all();
   return { items: result.results.slice(0, safeSize), page: safePage, pageSize: safeSize, hasMore: result.results.length > safeSize };
 }
 
@@ -275,14 +275,14 @@ export async function createManualVersion(db: D1Database, noteId: number, operat
   const note = await getNote(db, noteId, session);
   if (note.deletedAt !== null) throw new ApiError(409, "NOTE_IN_TRASH", "回收站中的笔记不能创建版本");
   const derived = validateAndDeriveContent(note.content);
-  const latest = await db.prepare("SELECT id, content_json FROM uranus_note_versions WHERE note_id=? ORDER BY id DESC LIMIT 1").bind(noteId).first<{ id: number; content_json: string }>();
+  const latest = await db.prepare("SELECT id, content_json FROM uranus_note_versions WHERE note_id=? ORDER BY created_at DESC, id DESC LIMIT 1").bind(noteId).first<{ id: number; content_json: string }>();
   const versionId = latest?.content_json === derived.serialized ? latest.id : randomSafeInteger();
   const now = Date.now();
   const statements = [db.prepare("INSERT INTO uranus_operations(operation_id, scope, request_hash, status, created_at, expires_at, user_id) VALUES (?, 'version.create', ?, 'pending', ?, ?, ?)").bind(operationId, hash, now, now + 604_800_000, session?.user.id ?? null)];
   if (latest?.content_json !== derived.serialized) {
     statements.push(db.prepare("INSERT INTO uranus_note_versions(id, note_id, content_json, content_schema_v1, content_schema_version, title, char_count, source_revision, created_at) SELECT ?, id, content_json, 1, content_schema_version, title, ?, revision, ? FROM uranus_notes WHERE id=? AND revision=? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM uranus_runtime_state WHERE id=1 AND mode='normal')").bind(versionId, derived.charCount, now, noteId, note.revision));
     for (const attachmentId of derived.attachmentIds) statements.push(db.prepare("INSERT INTO uranus_attachment_refs(attachment_id, note_id, version_id) SELECT ?, ?, id FROM uranus_note_versions WHERE id=? ON CONFLICT DO NOTHING").bind(attachmentId, noteId, versionId));
-    statements.push(db.prepare("DELETE FROM uranus_note_versions WHERE note_id=? AND id NOT IN (SELECT id FROM uranus_note_versions WHERE note_id=? ORDER BY id DESC LIMIT 30)").bind(noteId, noteId));
+    statements.push(db.prepare("DELETE FROM uranus_note_versions WHERE note_id=? AND id NOT IN (SELECT id FROM uranus_note_versions WHERE note_id=? ORDER BY created_at DESC, id DESC LIMIT 30)").bind(noteId, noteId));
   }
   statements.push(
     db.prepare("UPDATE uranus_operations SET status='succeeded', result_id=?, result_revision=? WHERE operation_id=? AND EXISTS (SELECT 1 FROM uranus_note_versions WHERE id=?)").bind(String(versionId), note.revision, operationId, versionId),
@@ -326,7 +326,7 @@ export async function restoreVersion(db: D1Database, noteId: number, versionId: 
       db.prepare("DELETE FROM uranus_attachment_refs WHERE note_id=? AND version_id IS NULL AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(noteId, noteId, input.operation_id),
     );
     for (const attachmentId of restored.attachmentIds) statements.push(db.prepare("INSERT INTO uranus_attachment_refs(attachment_id, note_id, version_id) SELECT id, note_id, NULL FROM uranus_attachments WHERE id=? AND note_id=? AND status='ready' AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(attachmentId, noteId, noteId, input.operation_id));
-    statements.push(db.prepare("DELETE FROM uranus_note_versions WHERE note_id=? AND id NOT IN (SELECT id FROM uranus_note_versions WHERE note_id=? ORDER BY id DESC LIMIT 30) AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(noteId, noteId, noteId, input.operation_id));
+    statements.push(db.prepare("DELETE FROM uranus_note_versions WHERE note_id=? AND id NOT IN (SELECT id FROM uranus_note_versions WHERE note_id=? ORDER BY created_at DESC, id DESC LIMIT 30) AND EXISTS (SELECT 1 FROM uranus_notes WHERE id=? AND last_operation_id=?)").bind(noteId, noteId, noteId, input.operation_id));
   }
   statements.push(
     same

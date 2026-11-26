@@ -9,7 +9,24 @@ export function safeFileName(value: string, fallback: string) {
   if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(clean)) clean = "_" + clean;
   return clean || fallback;
 }
-const escape = (value: string) => value.replace(/([\\`*_{}\[\]<>#!|~])/g, "\\$1");
+const escape = (value: string) => value.replace(/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|[\\`*{}\[\]<>#!|~]/gu, "\\$&");
+// Older imports stored inline Markdown as text. Preserve complete source
+// constructs on export, while still escaping unmatched punctuation/HTML.
+function sourceMarkdown(value: string): string {
+  const syntax = /(`+)([^\n]*?)\1|\*\*(?=\S)([^\n]*?\S)\*\*|__(?=\S)([^\n]*?\S)__|~~(?=\S)([^\n]*?\S)~~/g;
+  let result = "", offset = 0;
+  for (const match of value.matchAll(syntax)) {
+    result += escape(value.slice(offset, match.index));
+    // Code spans are literal; other source constructs must not emit raw HTML.
+    result += match[1] ? match[0] : match[0].replace(/[<>]/g, character => "\\" + character);
+    offset = match.index + match[0].length;
+  }
+  return result + escape(value.slice(offset));
+}
+function plainParagraph(node: ContentNode): string | undefined {
+  if (node.type !== "paragraph" || node.content?.some(child => child.type !== "text" || child.marks?.length)) return undefined;
+  return nodeText(node);
+}
 const destination = (value: string) => value.replace(/[\s()<>\\]/g, character => character === "(" ? "%28" : character === ")" ? "%29" : encodeURIComponent(character));
 export function nodeText(node: ContentNode): string {
   if (node.type === "text") return node.text ?? "";
@@ -41,7 +58,7 @@ export function toMarkdown(doc: ContentNode) {
     if (node.type === "label" || node.type === "noteLink") return nodeText(node);
     if (node.type === "inlineImage") return block({ ...node, type: "image" });
     if (node.type === "inlineFile") return block({ ...node, type: "fileAttachment" });
-    let value = escape(node.text ?? "");
+    let value = node.marks?.length ? escape(node.text ?? "") : sourceMarkdown(node.text ?? "");
     if (node.marks?.some(mark => mark.type === "code")) {
       const raw = node.text ?? "", fence = "`".repeat(Math.max(0, ...[...raw.matchAll(/`+/g)].map(m => m[0].length)) + 1);
       value = `${fence} ${raw} ${fence}`;
@@ -95,5 +112,36 @@ export function toMarkdown(doc: ContentNode) {
   };
   const nodes = doc.content ?? [], first = nodes[0];
   const projected = first && ["paragraph", "heading"].includes(first.type ?? "") && (first.content ?? []).every(child => ["text", "hardBreak"].includes(child.type ?? ""));
-  return nodes.map((node, index) => index === 0 && projected ? (nodeText(node).trim() ? "# " + escape(nodeText(node).replaceAll("\n", " ")) : "") : block(node)).filter(Boolean).join("\n\n") + "\n";
+  const output: string[] = [];
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index]!;
+    if (index === 0 && projected) {
+      if (nodeText(node).trim()) output.push("# " + escape(nodeText(node).replaceAll("\n", " ")));
+      continue;
+    }
+    // Legacy imports made every table line a separate paragraph. Recognize
+    // only a header followed by a matching GFM delimiter row, not arbitrary pipes.
+    const raw = plainParagraph(node);
+    if (raw !== undefined && /^\s*\|.*\|\s*$/.test(raw)) {
+      let delimiter = index + 1;
+      while (delimiter < nodes.length && plainParagraph(nodes[delimiter]!) === "") delimiter++;
+      const rule = nodes[delimiter] && plainParagraph(nodes[delimiter]!);
+      const cells = (line: string) => line.trim().slice(1, -1).split("|");
+      if (rule !== undefined && /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/.test(rule) && cells(raw).length === cells(rule).length) {
+        const rows = [raw, rule];
+        let last = delimiter, next = delimiter + 1;
+        while (next < nodes.length) {
+          const line = plainParagraph(nodes[next]!);
+          if (line === "") { next++; continue; }
+          if (line === undefined || !/^\s*\|.*\|\s*$/.test(line) || cells(line).length !== cells(raw).length) break;
+          rows.push(line); last = next++;
+        }
+        output.push(rows.map(line => "|" + cells(line).map(sourceMarkdown).join("|") + "|").join("\n"));
+        index = last; continue;
+      }
+    }
+    const rendered = block(node);
+    if (rendered) output.push(rendered);
+  }
+  return output.join("\n\n") + "\n";
 }

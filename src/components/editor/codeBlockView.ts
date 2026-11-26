@@ -5,6 +5,19 @@ import { NodeSelection, Plugin, PluginKey, Selection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { CODE_LANGUAGES, HIGHLIGHT_MAX_CHARS, highlightDecorations, looksLikeJson } from "./codeHighlight";
 
+// Static trusted SVG paths only; document content never enters innerHTML.
+const actionPaths: Record<string, string> = {
+  "code-format": '<path d="m8 4-5 8 5 8m8-16 5 8-5 8M14 4l-4 16"/>',
+  "code-copy": '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H3V3h12v2"/>',
+  "code-select": '<rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/>',
+  "code-delete": '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>',
+  "check": '<path d="m5 12 4 4L19 6"/>',
+};
+function actionIcon(button: HTMLButtonElement, icon: string, label: string) {
+  button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${actionPaths[icon]}</svg>`;
+  button.title = label; button.setAttribute("aria-label", label);
+}
+
 // Code block display features: line numbers (display only) and a fold state. Editable notes persist the fold state in the `collapsed` attribute (content schema 14);
 // read-only or trashed notes cannot be modified, so there the toggle is a per-session override kept in plugin state.
 export const foldKey = new PluginKey<Set<number>>("codeBlockFold");
@@ -99,6 +112,8 @@ export const CodeBlockView = Extension.create({
               const make = (label: string, className: string, onClick: (button: HTMLButtonElement) => void) => {
                 const button = document.createElement("button");
                 button.type = "button"; button.className = className; button.textContent = label;
+                button.title = label; button.setAttribute("aria-label", label);
+                if (actionPaths[className]) actionIcon(button, className, label);
                 button.onmousedown = event => event.preventDefault();
                 button.onclick = () => onClick(button);
                 actions.appendChild(button); return button;
@@ -152,10 +167,10 @@ export const CodeBlockView = Extension.create({
               const copy = make(t("复制"), "code-copy", button => {
                 const current = view.state.doc.nodeAt(pos);
                 navigator.clipboard.writeText(current?.type.name === "codeBlock" ? current.textContent : "").then(() => {
-                  button.textContent = t("已复制"); setTimeout(() => { button.textContent = t("复制"); }, 1500);
+                  actionIcon(button, "check", t("已复制")); setTimeout(() => { actionIcon(button, "code-copy", t("复制代码")); }, 1500);
                 }).catch(() => window.dispatchEvent(new CustomEvent("uranus-editor-error", { detail: t("复制代码失败，请检查剪贴板权限") })));
               });
-              copy.setAttribute("aria-label", t("复制代码"));
+              copy.setAttribute("aria-label", t("复制代码")); copy.title = t("复制代码");
               if (view.editable) {
                 make(t("选中整块"), "code-select", () => {
                   if (!view.editable || view.composing || view.state.doc.nodeAt(pos)?.type.name !== "codeBlock") return;

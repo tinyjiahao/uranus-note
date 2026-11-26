@@ -1,5 +1,10 @@
 // Chinese is the source locale. Only application-owned messages belong here.
 export const english: Readonly<Record<string, string>> = {
+  "剪切": "Cut",
+  "剪贴板操作失败，请使用键盘快捷键重试": "Clipboard action failed. Please try the keyboard shortcut.",
+  "单击显示笔记链接操作": "Click for note link actions",
+  "回退": "Back",
+  "前进": "Forward",
   "正在检查更新": "Checking for updates",
   "本地副本，暂未确认最新": "Local copy; latest version not yet confirmed",
   "检查笔记更新": "Check for updates",

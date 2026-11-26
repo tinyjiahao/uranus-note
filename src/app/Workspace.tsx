@@ -1,3 +1,4 @@
+import { NavigationButtons, useAppNavigation } from "../components/NavigationButtons";
 import { cacheBaselineUnsafe, acceptCacheBaseline, installCacheNotifications } from "../state/noteCache";
 import { t, useLocale } from "../state/locale";
 import { supportsSchema } from "../../shared/schemaVersion";
@@ -47,6 +48,7 @@ function CacheReadStatus({ checking, failed }: { checking: boolean; failed: bool
 
 export function Workspace({ user, defaultDataOwner }: { user: import("../../shared/account").AccountIdentity; defaultDataOwner: boolean }) {
   useLocale();
+  useAppNavigation();
   const params = useParams();
   const selectedId = params.id ? Number(params.id) : undefined;
   const navigate = useNavigate();
@@ -372,9 +374,9 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
       if (patch === "permanent" && !confirm(t("永久删除这篇笔记及其历史附件？此操作不能撤销。"))) return;
       const current = queryClient.getQueryData<NoteDetail>(["user", user.id, "note", target.id]);
       const revision = existingQueue && current ? current.revision : target.revision;
-      if (patch === "delete") { const deleted = await removeNote(target.id, revision); setDeletedNote(deleted); undoReturnId.current = selectedIdRef.current === target.id ? target.id : null; setNotice(t("已移入最近删除")); if (selectedIdRef.current === target.id) navigate("/"); }
+      if (patch === "delete") { const deleted = await removeNote(target.id, revision); setDeletedNote(deleted); undoReturnId.current = selectedIdRef.current === target.id ? target.id : null; setNotice(t("已移入最近删除")); if (selectedIdRef.current === target.id) navigate("/", { replace: true }); }
       else if (patch === "restore") { const restored = await restoreNote(target.id, revision); queryClient.setQueryData(["user", user.id, "note", target.id], restored); setNotice(t("笔记已恢复")); }
-      else if (patch === "permanent") { const job = await hardDeleteNote(target.id, revision); setJobId(job.job_id); setNotice(t("永久删除任务已入队，正在处理中")); if (selectedIdRef.current === target.id) navigate("/"); }
+      else if (patch === "permanent") { const job = await hardDeleteNote(target.id, revision); setJobId(job.job_id); setNotice(t("永久删除任务已入队，正在处理中")); if (selectedIdRef.current === target.id) navigate("/", { replace: true }); }
       else if (existingQueue || selectedIdRef.current === target.id) {
         const detail = current ?? await getNote(target.id); const queue = queueFor(detail); queue.enqueue(patch, 0); await queue.flush(); if (queue.hasUnsaved()) throw new Error(t("修改尚未同步，请检查保存状态"));
       } else { const result = await patchNote(target.id, revision, patch); queryClient.setQueryData(["user", user.id, "note", target.id], result.note); }
@@ -455,8 +457,10 @@ export function Workspace({ user, defaultDataOwner }: { user: import("../../shar
     </section>}
 
     <section className="editor-panel">
+      {!selectedNote && <header className="editor-meta"><NavigationButtons /></header>}
       {selectedNote ? <>
         <header className="editor-meta">
+          <NavigationButtons />
           <button className="back-to-list" aria-label={t("返回笔记列表")} onClick={() => backToList(selectedNote)}><ChevronLeft /></button>
           {layout !== "three" && <button aria-label={t("三栏视图")} onClick={() => setLayout("three")}><LayoutPanelLeft /></button>}
           {layout === "three" && <button aria-label={t("收起侧栏")} onClick={() => setLayout("two")}><PanelLeftClose /></button>}

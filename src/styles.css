@@ -120,7 +120,7 @@ html:lang(en) .prose-editor p.is-editor-empty:first-child::before { content: "St
 .width-reading .editor-content > .prose-editor { max-width: 860px; }
 @container (min-width: 600px) { .editor-content > .prose-editor { padding-inline: 32px; } }
 .prose-editor:focus-visible { outline: none; }
-.editor-content:focus-within { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+.editor-content:focus-within { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 20%, transparent); }
 .prose-editor p { margin: .5em 0; }
 .prose-editor h1, .prose-editor h2, .prose-editor h3 { margin: 1em 0 .5em; }
 .prose-editor ul, .prose-editor ol, .prose-editor blockquote { margin-block: .5em; }
@@ -485,7 +485,6 @@ button, .note-row, select { -webkit-tap-highlight-color: transparent; touch-acti
 .file-attachment small { opacity:.65; }
 .file-attachment.ProseMirror-selectednode { outline: 2px solid var(--select-ring); outline-offset: 2px; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
 .file-attachment--compact.ProseMirror-selectednode { border-radius: 8px; background: var(--select-bg); }
-.note-link.ProseMirror-selectednode { outline: 2px solid var(--select-ring); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .note-link { border-radius:4px; padding:1px 4px; background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .note-link-missing { opacity:.65; text-decoration:line-through; }
 
@@ -772,3 +771,53 @@ button, .note-row, .scope-button, .load-more, .folder-row { transition: backgrou
 .slash-item { display: block; width: 100%; padding: 7px 10px; border-radius: 6px; text-align: left; font-size: 13px; color: var(--text); }
 .slash-item.active, .slash-item:hover { background: color-mix(in srgb, var(--accent) 25%, var(--panel)); }
 .slash-empty { color: var(--muted); cursor: default; }
+
+/* v12: bounded link suggestions and explicit application navigation. */
+.object-popup.note-link-popup { width: min(420px, calc(100vw - 16px)); padding: 8px; border-radius: 14px; }
+.object-popup.note-link-popup > header { padding: 2px 4px 8px 10px; border-bottom: 0; }
+.object-popup.note-link-popup > header strong { font-size: 13px; font-weight: 600; }
+.object-popup.note-link-popup > header button { color: var(--muted); border-radius: 7px; }
+.note-link-popup .object-popup-content { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 0; }
+.note-link-search { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin: 0 4px 10px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.note-link-search > svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted); }
+.object-popup.note-link-popup .object-popup-content .note-link-search input[data-initial-focus] { width: 100%; min-width: 0; height: 36px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; outline: none; box-shadow: none; font-size: 13px; }
+.note-link-search:focus-within { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent); }
+.note-link-popup .note-link-candidates { max-height: 280px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 2px 4px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.note-link-popup .note-link-candidates button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; margin: 0 0 2px; padding: 8px 10px; border: 0; border-radius: 7px; text-align: left; font-size: 13px; line-height: 20px; }
+.note-link-candidates button > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-link-candidates svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--muted); }
+.note-link-candidates .note-link-enter { opacity: 0; width: 13px; }
+.note-link-popup .note-link-candidates button:hover { background: var(--panel-soft); }
+.note-link-popup .note-link-candidates button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.note-link-candidates button:focus-visible .note-link-item-icon { color: var(--accent-deep); }
+.note-link-candidates button:focus-visible .note-link-enter { opacity: .8; }
+.note-link-popup p { margin: 6px 12px 14px; font-size: 12px; }
+@media (pointer: coarse) { .note-link-popup .note-link-candidates button { min-height: 44px; } .object-popup.note-link-popup .object-popup-content .note-link-search input[data-initial-focus] { height: 40px; font-size: 16px; } }
+.app-navigation { display: inline-flex; flex-shrink: 0; }
+.version-list, .note-row time, .sidebar .scope-button, .note-info-tech { font-variant-numeric: tabular-nums; }
+.code-actions .code-format, .code-actions .code-copy, .code-actions .code-select, .code-actions .code-delete { width: 24px; height: 24px; padding: 4px; display: inline-grid; place-items: center; }
+.code-actions svg { width: 14px; height: 14px; }
+.code-actions .code-language { padding-inline: 5px; }
+/* TipTap renders header cells in tbody. Preserve horizontal scrolling and give
+   long tables a bounded local scrollport, so native sticky has a real scroller. */
+.tableWrapper:has(tr:first-child > th) { max-height: 70dvh; overflow: auto; }
+.prose-editor table { border-collapse: separate; border-spacing: 0; }
+.prose-editor td, .prose-editor th { border-width: 0 1px 1px 0; }
+.prose-editor tr > :first-child { border-left-width: 1px; }
+.prose-editor tr:first-child > td, .prose-editor tr:first-child > th { border-top-width: 1px; }
+.prose-editor tr:first-child > th { position: sticky; top: -28px; z-index: 4; background: var(--table-head-bg); }
+@media (pointer: coarse) { .code-actions button { min-width: 36px; min-height: 36px; } }
+@media print {
+  .tableWrapper:has(tr:first-child > th) { max-height: none; overflow: visible; }
+  .prose-editor tr:first-child > th { position: static; }
+}
+
+@media (pointer: coarse) { .prose-editor tr:first-child > th { top: -48px; } }
+@media (max-width: 767px) { .app-navigation button:last-child { display: none; } }
+
+
+/* Keep the selected inline atom within one rectangular box. */
+.prose-editor .note-link { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 6px; border-radius: 6px; vertical-align: baseline; line-height: 1.45; }
+.prose-editor .note-link > a { min-width: 0; overflow-wrap: anywhere; }
+.prose-editor .note-link.ProseMirror-selectednode { outline: none; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--line)); }
+@media print { .prose-editor .note-link { display: inline; } .note-link-actions { display: none; } }

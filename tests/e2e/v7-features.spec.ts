@@ -1,3 +1,4 @@
+import { uuidv7 } from "../../src/api/client";
 import { test, expect, type Page } from "./fixtures";
 import { testEmail, testPassword } from "./credentials";
 import type { Editor } from "@tiptap/core";
@@ -38,10 +39,16 @@ test("label popup, file upload, note link, outline and exports survive saving", 
   await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器");
   await page.reload(); await expect(body.locator(".label-chip")).toHaveText("已修改标签"); await expect(body.locator(".inline-file")).toContainText("fixture.pdf");
   await expect(body.locator(".label-chip")).toHaveAttribute("data-color", "green");
+  // Link to a different note: the current note is intentionally excluded.
+  await page.evaluate(async operation_id => {
+    const session = await (await fetch("/api/session")).json() as { csrfToken: string };
+    const response = await fetch("/api/notes", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrfToken }, body: JSON.stringify({ operation_id, content_schema_version: 15, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V7 linked target" }] }] } }) });
+    if (!response.ok) throw new Error(`Create link target: ${response.status}`);
+  }, uuidv7());
   await body.locator("p").first().click(); await page.keyboard.press("End");
-  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "插入笔记链接", exact: true }).click(); await page.getByLabel("搜索笔记标题").fill("V7 feature fixture");
-  await page.getByRole("dialog", { name: "插入笔记链接" }).getByRole("button", { name: "V7 feature fixture", exact: true }).first().click();
-  await expect(body.locator(".note-link")).toContainText("V7 feature fixture");
+  await page.getByRole("button", { name: "更多格式与插入", exact: true }).click(); await page.getByRole("button", { name: "插入笔记链接", exact: true }).click(); await page.getByLabel("搜索笔记标题").fill("V7 linked target");
+  await page.getByRole("dialog", { name: "插入笔记链接" }).getByRole("button", { name: "V7 linked target", exact: true }).first().click();
+  await expect(body.locator(".note-link")).toContainText("V7 linked target");
   await page.keyboard.press("ControlOrMeta+s"); await expect(page.locator(".save-state")).toContainText("已保存到服务器");
   await page.getByRole("button", { name: "笔记更多", exact: true }).click();
   const mdDownload = page.waitForEvent("download"); await page.getByRole("button", { name: "导出 Markdown", exact: true }).click(); expect((await mdDownload).suggestedFilename()).toMatch(/\.md$/);

@@ -951,7 +951,7 @@ function NoteEditorView({ note, readingUserId, onChange, onFlush, onPersistLocal
     {colorsPopup && !readOnly && <TextColorsPopup editor={editor} anchor={colorsPopup} close={() => setColorsPopup(null)} />}
     {paragraphPopup && !readOnly && <ParagraphStyles editor={editor} anchor={paragraphPopup} close={() => setParagraphPopup(null)} />}
     {outline && <OutlinePopup editor={editor} anchor={outline} close={() => setOutline(null)} />}
-    {noteLinkPopup && !readOnly && <NoteLinkPopup editor={editor} anchor={noteLinkPopup} close={() => setNoteLinkPopup(null)} />}
+    {noteLinkPopup && !readOnly && <NoteLinkPopup noteId={note.id} editor={editor} anchor={noteLinkPopup} close={() => setNoteLinkPopup(null)} />}
     {codeLanguagePopup && !readOnly && <Popup anchor={codeLanguagePopup.anchor} title={t("选择代码语言")} close={() => setCodeLanguagePopup(null)} restoreFocus={() => editor.view.focus()}>
       {CODE_LANGUAGES.map(option => <button key={option.id} onClick={() => {
         const node = editor.state.doc.nodeAt(codeLanguagePopup.pos);
