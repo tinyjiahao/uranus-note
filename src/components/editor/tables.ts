@@ -74,6 +74,7 @@ class UranusTableView extends TableView {
   private rowNumbers: HTMLDivElement;
   private observer: ResizeObserver;
   private frame = 0;
+  private headerFrame = 0;
   constructor(node: PMNode, private editor: Editor, private getPos: () => number | undefined, private ownerView: EditorView) {
     super(node, 64, ownerView);
     this.stage = document.createElement("div"); this.stage.className = "table-stage";
@@ -89,11 +90,36 @@ class UranusTableView extends TableView {
     ownerView.dom.addEventListener("compositionend", this.finishComposition);
     window.addEventListener("uranus-table-row-numbers", this.layoutHandles);
     editor.on("selectionUpdate", this.active);
-    this.observer = new ResizeObserver(() => this.layoutHandles());
+    window.addEventListener("scroll", this.scheduleHeader, true);
+    window.addEventListener("resize", this.scheduleHeader);
+    window.visualViewport?.addEventListener("resize", this.scheduleHeader);
+    this.observer = new ResizeObserver(() => { this.layoutHandles(); this.scheduleHeader(); });
     this.observer.observe(this.table);
+    const scrollport = ownerView.dom.closest(".editor-content");
+    if (scrollport) this.observer.observe(scrollport);
     this.update(node);
     this.active();
   }
+  // Move the real header cells within their natural table bounds. The CSS
+  // variable lives on the node-view wrapper, never in editable content/JSON.
+  private scheduleHeader = () => {
+    if (this.headerFrame) return;
+    this.headerFrame = requestAnimationFrame(() => {
+      this.headerFrame = 0;
+      const row = this.table.rows[0];
+      const scrollport = this.ownerView.dom.closest(".editor-content");
+      let offset = 0;
+      if (row && scrollport && Array.from(row.cells).every(cell => cell.tagName === "TH")) {
+        const tableRect = this.table.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const portRect = scrollport.getBoundingClientRect();
+        const top = Math.max(portRect.top + scrollport.clientTop, window.visualViewport?.offsetTop ?? 0);
+        offset = Math.max(0, Math.min(top - rowRect.top, tableRect.bottom - rowRect.bottom));
+      }
+      this.dom.style.setProperty("--table-header-offset", `${offset}px`);
+      this.dom.toggleAttribute("data-header-stuck", offset > 0);
+    });
+  };
   private active = () => {
     const active = this.editor.isEditable && tableContext(this.editor)?.pos === this.getPos();
     this.dom.dataset.active = String(active);
@@ -103,6 +129,7 @@ class UranusTableView extends TableView {
     } else delete this.dom.dataset.selectionLabel;
   };
   private layoutHandles = () => {
+    this.scheduleHeader();
     if (this.ownerView.composing) return;
     const rows = Array.from(this.table.rows); const cells = Array.from(rows[0]?.cells ?? []);
     let showNumbers = false;
@@ -249,7 +276,7 @@ class UranusTableView extends TableView {
     return true;
   }
   stopEvent(event: Event) { return (event.target as HTMLElement).closest("button") !== null; }
-  destroy() { cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.ownerView.dom.removeEventListener("compositionend", this.finishComposition); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
+  destroy() { cancelAnimationFrame(this.headerFrame); window.removeEventListener("scroll", this.scheduleHeader, true); window.removeEventListener("resize", this.scheduleHeader); window.visualViewport?.removeEventListener("resize", this.scheduleHeader); cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.ownerView.dom.removeEventListener("compositionend", this.finishComposition); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
 }
 const UranusTable = Table.extend({
   addAttributes() { return { widthMode: { default: "fluid", parseHTML: (el: HTMLElement) => el.dataset.widthMode === "fixed" ? "fixed" : "fluid", renderHTML: (attrs: Record<string, unknown>) => ({ "data-width-mode": attrs.widthMode }) } }; },

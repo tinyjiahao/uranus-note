@@ -801,21 +801,17 @@ button, .note-row, .scope-button, .load-more, .folder-row { transition: backgrou
 .code-actions .code-format, .code-actions .code-copy, .code-actions .code-select, .code-actions .code-delete { width: 24px; height: 24px; padding: 4px; display: inline-grid; place-items: center; }
 .code-actions svg { width: 14px; height: 14px; }
 .code-actions .code-language { padding-inline: 5px; }
-/* TipTap renders header cells in tbody. Preserve horizontal scrolling and give
-   long tables a bounded local scrollport, so native sticky has a real scroller. */
-.tableWrapper:has(tr:first-child > th) { max-height: 70dvh; overflow: auto; }
+/* Tables keep their natural content height and existing horizontal scrolling. */
 .prose-editor table { border-collapse: separate; border-spacing: 0; }
 .prose-editor td, .prose-editor th { border-width: 0 1px 1px 0; }
 .prose-editor tr > :first-child { border-left-width: 1px; }
 .prose-editor tr:first-child > td, .prose-editor tr:first-child > th { border-top-width: 1px; }
-.prose-editor tr:first-child > th { position: sticky; top: -28px; z-index: 4; background: var(--table-head-bg); }
+.prose-editor tr:first-child > th { position: relative; transform: translateY(var(--table-header-offset, 0px)); z-index: 4; background: var(--table-head-bg); }
+.table-row-number-header:first-child { transform: translateY(var(--table-header-offset, 0px)); z-index: 5; }
+.tableWrapper[data-header-stuck] tr:first-child > th,
+.tableWrapper[data-header-stuck] .table-row-number-header:first-child { box-shadow: 0 3px 4px -2px rgb(0 0 0 / .2); border-bottom-color: color-mix(in srgb, var(--line) 75%, var(--muted)); }
+@media print { .prose-editor tr:first-child > th { transform: none; box-shadow: none !important; border-bottom-color: var(--line) !important; } }
 @media (pointer: coarse) { .code-actions button { min-width: 36px; min-height: 36px; } }
-@media print {
-  .tableWrapper:has(tr:first-child > th) { max-height: none; overflow: visible; }
-  .prose-editor tr:first-child > th { position: static; }
-}
-
-@media (pointer: coarse) { .prose-editor tr:first-child > th { top: -48px; } }
 @media (max-width: 767px) { .app-navigation button:last-child { display: none; } }
 
 

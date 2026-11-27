@@ -4,7 +4,7 @@
 
 ## 需求基线
 
-- v12 需求见 `doc/plans/plan_v12.md`，实现与验收见 `doc/implementation/implementation-v12.md`：版本按 `created_at DESC, id DESC` 排序与保留；标题索引仅账号隔离内存态、十分钟有效、最多 50 页，超限回退服务端搜索；链接标题按现有 20 ID 上限分批；导航仅标签页内存。零新增依赖、API、schema、迁移、IndexedDB 或 Service Worker。实际表头在 tbody 首行，保留横向滚动并使用 70dvh 表格局部滚动区吸顶。
+- v12 需求见 `doc/plans/plan_v12.md`，实现与验收见 `doc/implementation/implementation-v12.md`：版本按 `created_at DESC, id DESC` 排序与保留；标题索引仅账号隔离内存态、十分钟有效、最多 50 页，超限回退服务端搜索；链接标题按现有 20 ID 上限分批；导航仅标签页内存。零新增依赖、API、schema、迁移、IndexedDB 或 Service Worker。实际表头在 tbody 首行；按用户最新要求取消 70dvh 局部限高，表格自然展开；NodeView 通过外层 CSS 变量同步真实表头纵向位移，实现编辑区滚动吸顶并限制在表格内，保留横向列对齐，打印禁用位移。
 
 - v11 缓存需求见 `doc/plans/plan_v11.md`：TanStack Query + 独立 IndexedDB 正文缓存，revision 校验及 60 秒有效期，缓存与未同步草稿严格分离；条件请求先鉴权，旧响应不得回退版本或跨账号写回。零新增依赖、schema 与迁移，不增加离线编辑或 Service Worker；v11 不包含列表持久缓存、列表 ETag 或额外列表版本号，不为缓存新增数据库写入。本地实现与自动化验证见 `doc/implementation/implementation-v11.md`；真实 Safari/iOS、IME 和跨设备验收单独记录。
 

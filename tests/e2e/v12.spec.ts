@@ -73,21 +73,58 @@ test("searches link titles locally, reuses the index and bounds suggestions", as
   await expect(popup.getByText("未找到笔记", { exact: true })).toBeVisible();
   expect(count).toBeGreaterThan(0);
 });
-test("keeps long table headers visible and renders accessible code icons", async ({ page }, testInfo) => {
+test("keeps natural table height with editor-scroll sticky headers and code icons", async ({ page }, testInfo) => {
   await login(page);
   const table: JSONContent = { type: "table", content: Array.from({ length: 40 }, (_, row) => ({ type: "tableRow", content: [0, 1].map(col => ({ type: row === 0 ? "tableHeader" : "tableCell", content: [p(`${row === 0 ? "Header" : row}-${col}`)] })) })) };
-  const note = await create(page, `V12 styles ${Date.now()}`, [{ type: "codeBlock", attrs: { language: "json" }, content: [{ type: "text", text: '{"a":1}' }] }, table]);
+  const note = await create(page, `V12 styles ${Date.now()}`, [{ type: "codeBlock", attrs: { language: "json" }, content: [{ type: "text", text: '{"a":1}' }] }, table, ...Array.from({ length: 30 }, () => p('After table'))]);
   await page.goto(`/notes/${note.id}`); await expect(page.locator(".code-format svg")).toBeVisible();
   await page.getByRole("button", { name: "格式化", exact: true }).click(); await expect(page.locator("pre")).toContainText('"a": 1');
   await expect(page.locator(".code-copy")).toHaveAttribute("title", "复制代码");
+  await page.evaluate(() => { localStorage.setItem("uranus.table.rowNumbers", "1"); window.dispatchEvent(new Event("uranus-table-row-numbers")); });
   const wrapper = page.locator(".tableWrapper"), header = wrapper.locator("th").first();
   await expect(header).toBeVisible();
+  await expect(wrapper).toHaveCSS("max-height", "none");
+  expect((await wrapper.boundingBox())!.height).toBeGreaterThan(page.viewportSize()!.height);
+  expect(await wrapper.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
   await wrapper.evaluate(el => { el.scrollTop = 300; });
-  await expect.poll(async () => { const a = await wrapper.boundingBox(), b = await header.boundingBox(); return Math.abs(a!.y - b!.y); }).toBeLessThan(3);
-  expect(await wrapper.evaluate(el => el.scrollTop)).toBe(300);
-  const headerY = (await header.boundingBox())!.y;
-  await wrapper.evaluate(el => { el.scrollTop = 600; });
-  await expect.poll(async () => Math.abs((await header.boundingBox())!.y - headerY)).toBeLessThan(1);
+  expect(await wrapper.evaluate(el => el.scrollTop)).toBe(0);
+  const scroller = page.locator(".editor-content");
+  const scrollPastHeader = async (distance: number) => {
+    const port = (await scroller.boundingBox())!, tableBox = (await wrapper.locator("table").boundingBox())!;
+    await scroller.evaluate((el, delta) => { el.scrollTop += delta; }, tableBox.y - port.y + distance);
+  };
+  await scrollPastHeader(300);
+  await expect.poll(async () => Math.abs((await header.boundingBox())!.y - (await scroller.boundingBox())!.y)).toBeLessThan(2);
+  const corner = wrapper.locator(".table-row-number-header").first();
+  await expect(corner).toBeVisible();
+  expect(Math.abs((await corner.boundingBox())!.y - (await header.boundingBox())!.y)).toBeLessThan(2);
+  await expect(wrapper).toHaveAttribute("data-header-stuck", "");
+  expect(await header.evaluate(el => getComputedStyle(el).boxShadow)).not.toBe("none");
+  await scroller.evaluate(el => { el.scrollTop += 300; });
+  await expect.poll(async () => Math.abs((await header.boundingBox())!.y - (await scroller.boundingBox())!.y)).toBeLessThan(2);
+  // A wide table keeps the same horizontal coordinates for header and body.
+  await wrapper.locator("table").evaluate(el => { el.style.minWidth = "1800px"; });
+  await wrapper.evaluate(el => { el.scrollLeft = 250; });
+  expect(await wrapper.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+  expect(Math.abs((await header.boundingBox())!.x - (await wrapper.locator("td").first().boundingBox())!.x)).toBeLessThan(1);
+  await wrapper.locator("table").evaluate(el => { el.style.minWidth = ""; });
+  await wrapper.locator("tr").last().scrollIntoViewIfNeeded();
+  await expect(wrapper.locator("tr").last()).toBeInViewport();
+  const tableBottom = await wrapper.locator("table").boundingBox();
+  const headerBottom = await header.boundingBox();
+  expect(headerBottom!.y + headerBottom!.height).toBeLessThanOrEqual(tableBottom!.y + tableBottom!.height + 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await scrollPastHeader(300);
+  await expect.poll(async () => Math.abs((await header.boundingBox())!.y - (await scroller.boundingBox())!.y)).toBeLessThan(2);
+  await expect(wrapper).toHaveCSS("max-height", "none");
+  const bottom = (await wrapper.locator("table").boundingBox())!, port = (await scroller.boundingBox())!;
+  await scroller.evaluate((el, delta) => { el.scrollTop += delta; }, bottom.y + bottom.height - port.y + 10);
+  await expect.poll(async () => { const rect = (await header.boundingBox())!; return rect.y + rect.height; }).toBeLessThan((await scroller.boundingBox())!.y + 1);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await scrollPastHeader(300);
+  await page.emulateMedia({ media: "print" });
+  await expect(header).toHaveCSS("transform", "none");
+  await page.emulateMedia({ media: "screen" });
   for (const theme of ["dark", "light"]) {
     await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
     expect(await header.evaluate(el => getComputedStyle(el).borderBottomWidth)).toBe("1px");
