@@ -4,7 +4,7 @@
 
 ## 需求基线
 
-- v12 需求见 `doc/plans/plan_v12.md`，实现与验收见 `doc/implementation/implementation-v12.md`：版本按 `created_at DESC, id DESC` 排序与保留；标题索引仅账号隔离内存态、十分钟有效、最多 50 页，超限回退服务端搜索；链接标题按现有 20 ID 上限分批；导航仅标签页内存。零新增依赖、API、schema、迁移、IndexedDB 或 Service Worker。实际表头在 tbody 首行；按用户最新要求取消 70dvh 局部限高，表格自然展开；NodeView 通过外层 CSS 变量同步真实表头纵向位移，实现编辑区滚动吸顶并限制在表格内，保留横向列对齐，打印禁用位移。
+- v12 需求见 `doc/plans/plan_v12.md`，实现与验收见 `doc/implementation/implementation-v12.md`：版本按 `created_at DESC, id DESC` 排序与保留；标题索引仅账号隔离内存态、十分钟有效、最多 50 页，超限回退服务端搜索；链接标题按现有 20 ID 上限分批；导航仅标签页内存。零新增依赖、API、schema、迁移、IndexedDB 或 Service Worker。实际表头在 tbody 首行；按用户最新要求取消 70dvh 局部限高，表格自然展开；NodeView 优先使用 ScrollTimeline 驱动真实表头位移，不支持时回退外层 CSS 变量及同步滚动事件；尺寸变化合帧处理，实现编辑区滚动吸顶并限制在表格内，保留横向列对齐，打印禁用位移。
 
 - v11 缓存需求见 `doc/plans/plan_v11.md`：TanStack Query + 独立 IndexedDB 正文缓存，revision 校验及 60 秒有效期，缓存与未同步草稿严格分离；条件请求先鉴权，旧响应不得回退版本或跨账号写回。零新增依赖、schema 与迁移，不增加离线编辑或 Service Worker；v11 不包含列表持久缓存、列表 ETag 或额外列表版本号，不为缓存新增数据库写入。本地实现与自动化验证见 `doc/implementation/implementation-v11.md`；真实 Safari/iOS、IME 和跨设备验收单独记录。
 
@@ -106,7 +106,7 @@
 - 使用 npm ci 复现安装；有意更新依赖同步 lockfile。preview 验证构建后的 Worker 与 bindings，不能只是静态文件服务。
 - 业务修改运行相关单元测试；数据、安全、上传和并发改动需 Workers 集成测试；编辑器和关键流程需浏览器测试。
 - 隔离测试预置非 uranus_ 表和非 uranus/ 对象，验证初始化、升级、清理及恢复不影响它们。
-- 发布按 plan_v1 的退出条件完成类型、构建、测试、staging、自部署和备份恢复验证。
+- 发布按变更范围执行（用户最新要求）：不涉及数据库结构、持久化内容格式、数据写入/删除逻辑或附件存储的改动（如样式、表头吸顶、菜单交互），完成类型、构建和相关测试后直接部署线上，不执行生产冻结、D1/R2 全量备份或临时运维预览。发布后检查健康、静态资源和相关功能；如用户要求提交推送，随后 commit/push。涉及上述数据风险或数据库迁移时，才按对应版本规范执行备份、必要的冻结排空、迁移及数据一致性验证；不以“没有新增 migration 文件”替代范围审查。既有历史发布记录保持原样。
 - 文档变更检查结构、命令、配置及引用，无需为纯文档变更新增业务测试。
 - 项目提供 README、LICENSE、CONTRIBUTING、SECURITY、配置示例及部署/API/备份文档。
 - 重大需求变化同步本文件和对应版本需求文档；不覆盖无关用户改动。

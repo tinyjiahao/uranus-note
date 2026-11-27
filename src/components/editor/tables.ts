@@ -75,6 +75,31 @@ class UranusTableView extends TableView {
   private observer: ResizeObserver;
   private frame = 0;
   private headerFrame = 0;
+  private headerAnimations: Animation[] = [];
+  private headerTargets: Element[] = [];
+  private headerGeometry = "";
+  private clearHeaderAnimations() {
+    this.headerAnimations.forEach(animation => animation.cancel());
+    this.headerAnimations = []; this.headerTargets = []; this.headerGeometry = "";
+  }
+  private animateHeader(scrollport: Element, row: HTMLTableRowElement, start: number, travel: number) {
+    const Timeline = (window as unknown as { ScrollTimeline?: new (options: { source: Element; axis: string }) => AnimationTimeline }).ScrollTimeline;
+    const range = scrollport.scrollHeight - scrollport.clientHeight;
+    if (!Timeline || range <= 0) { this.clearHeaderAnimations(); return false; }
+    const corner = this.rowNumbers.querySelector(".table-row-number-header:first-child");
+    const targets: Element[] = [...row.cells, ...(corner ? [corner] : [])];
+    const geometry = [start, travel, range].map(value => value.toFixed(3)).join(":");
+    if (geometry === this.headerGeometry && targets.length === this.headerTargets.length && targets.every((el, i) => el === this.headerTargets[i])) return true;
+    this.clearHeaderAnimations();
+    const points = [...new Set([0, Math.max(0, Math.min(range, start)), Math.max(0, Math.min(range, start + travel)), range])].sort((a, b) => a - b);
+    const frames = points.map(point => ({ offset: point / range, transform: `translate3d(0, ${Math.max(0, Math.min(travel, point - start))}px, 0)` }));
+    try {
+      const timeline = new Timeline({ source: scrollport, axis: "y" });
+      for (const target of targets) this.headerAnimations.push(target.animate(frames, { timeline, fill: "both", easing: "linear" }));
+      this.headerTargets = targets; this.headerGeometry = geometry;
+      return true;
+    } catch { this.clearHeaderAnimations(); return false; }
+  }
   constructor(node: PMNode, private editor: Editor, private getPos: () => number | undefined, private ownerView: EditorView) {
     super(node, 64, ownerView);
     this.stage = document.createElement("div"); this.stage.className = "table-stage";
@@ -90,11 +115,13 @@ class UranusTableView extends TableView {
     ownerView.dom.addEventListener("compositionend", this.finishComposition);
     window.addEventListener("uranus-table-row-numbers", this.layoutHandles);
     editor.on("selectionUpdate", this.active);
-    window.addEventListener("scroll", this.scheduleHeader, true);
+    window.addEventListener("scroll", this.updateHeader, { capture: true, passive: true });
     window.addEventListener("resize", this.scheduleHeader);
     window.visualViewport?.addEventListener("resize", this.scheduleHeader);
+    window.visualViewport?.addEventListener("scroll", this.updateHeader, { passive: true });
     this.observer = new ResizeObserver(() => { this.layoutHandles(); this.scheduleHeader(); });
     this.observer.observe(this.table);
+    this.observer.observe(ownerView.dom);
     const scrollport = ownerView.dom.closest(".editor-content");
     if (scrollport) this.observer.observe(scrollport);
     this.update(node);
@@ -106,19 +133,31 @@ class UranusTableView extends TableView {
     if (this.headerFrame) return;
     this.headerFrame = requestAnimationFrame(() => {
       this.headerFrame = 0;
-      const row = this.table.rows[0];
-      const scrollport = this.ownerView.dom.closest(".editor-content");
-      let offset = 0;
-      if (row && scrollport && Array.from(row.cells).every(cell => cell.tagName === "TH")) {
-        const tableRect = this.table.getBoundingClientRect();
-        const rowRect = row.getBoundingClientRect();
-        const portRect = scrollport.getBoundingClientRect();
-        const top = Math.max(portRect.top + scrollport.clientTop, window.visualViewport?.offsetTop ?? 0);
-        offset = Math.max(0, Math.min(top - rowRect.top, tableRect.bottom - rowRect.bottom));
-      }
-      this.dom.style.setProperty("--table-header-offset", `${offset}px`);
-      this.dom.toggleAttribute("data-header-stuck", offset > 0);
+      this.updateHeader();
     });
+  };
+  // Scroll events already run in the rendering cycle. Do not defer them by
+  // another frame: async scrolling can otherwise clip the old header position.
+  private updateHeader = () => {
+    const row = this.table.rows[0];
+    const scrollport = this.ownerView.dom.closest(".editor-content");
+    let offset = 0;
+    let native = false;
+    if (row && scrollport && Array.from(row.cells).every(cell => cell.tagName === "TH")) {
+      const tableRect = this.table.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      const portRect = scrollport.getBoundingClientRect();
+      const top = Math.max(portRect.top + scrollport.clientTop, window.visualViewport?.offsetTop ?? 0);
+      const travel = Math.max(0, tableRect.bottom - rowRect.bottom);
+      offset = Math.max(0, Math.min(top - rowRect.top, travel));
+      native = this.animateHeader(scrollport, row, scrollport.scrollTop + rowRect.top - top, travel);
+    }
+    if (!native) this.clearHeaderAnimations();
+    const driver = native ? "scroll-timeline" : "fallback";
+    if (this.dom.dataset.headerDriver !== driver) this.dom.dataset.headerDriver = driver;
+    const value = `${native ? 0 : offset}px`;
+    if (this.dom.style.getPropertyValue("--table-header-offset") !== value) this.dom.style.setProperty("--table-header-offset", value);
+    if (this.dom.hasAttribute("data-header-stuck") !== (offset > 0)) this.dom.toggleAttribute("data-header-stuck", offset > 0);
   };
   private active = () => {
     const active = this.editor.isEditable && tableContext(this.editor)?.pos === this.getPos();
@@ -276,7 +315,7 @@ class UranusTableView extends TableView {
     return true;
   }
   stopEvent(event: Event) { return (event.target as HTMLElement).closest("button") !== null; }
-  destroy() { cancelAnimationFrame(this.headerFrame); window.removeEventListener("scroll", this.scheduleHeader, true); window.removeEventListener("resize", this.scheduleHeader); window.visualViewport?.removeEventListener("resize", this.scheduleHeader); cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.ownerView.dom.removeEventListener("compositionend", this.finishComposition); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
+  destroy() { this.clearHeaderAnimations(); cancelAnimationFrame(this.headerFrame); window.removeEventListener("scroll", this.updateHeader, true); window.removeEventListener("resize", this.scheduleHeader); window.visualViewport?.removeEventListener("resize", this.scheduleHeader); window.visualViewport?.removeEventListener("scroll", this.updateHeader); cancelAnimationFrame(this.frame); this.observer.disconnect(); this.cancelDrag?.(); this.editor.off("selectionUpdate", this.active); this.ownerView.dom.removeEventListener("compositionend", this.finishComposition); this.table.removeEventListener("pointermove", this.hover); this.table.removeEventListener("pointerdown", this.startDrag); this.table.removeEventListener("contextmenu", this.contextMenu); this.dom.removeEventListener("scroll", this.overflow); window.removeEventListener("uranus-table-row-numbers", this.layoutHandles); }
 }
 const UranusTable = Table.extend({
   addAttributes() { return { widthMode: { default: "fluid", parseHTML: (el: HTMLElement) => el.dataset.widthMode === "fixed" ? "fixed" : "fluid", renderHTML: (attrs: Record<string, unknown>) => ({ "data-width-mode": attrs.widthMode }) } }; },

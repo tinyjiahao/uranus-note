@@ -73,7 +73,13 @@ test("searches link titles locally, reuses the index and bounds suggestions", as
   await expect(popup.getByText("未找到笔记", { exact: true })).toBeVisible();
   expect(count).toBeGreaterThan(0);
 });
-test("keeps natural table height with editor-scroll sticky headers and code icons", async ({ page }, testInfo) => {
+for (const native of [true, false]) test(`keeps natural table height with editor-scroll sticky headers and code icons (${native ? "native" : "fallback"})`, async ({ page }, testInfo) => {
+  if (!native) await page.addInitScript(() => Object.defineProperty(window, "ScrollTimeline", { value: undefined, configurable: true }));
+  await page.addInitScript(() => {
+    const state = window as unknown as { blockScrollTest: boolean; scrollTestAbort: AbortController };
+    state.scrollTestAbort = new AbortController();
+    window.addEventListener("scroll", event => { if (state.blockScrollTest) event.stopImmediatePropagation(); }, { capture: true, signal: state.scrollTestAbort.signal });
+  });
   await login(page);
   const table: JSONContent = { type: "table", content: Array.from({ length: 40 }, (_, row) => ({ type: "tableRow", content: [0, 1].map(col => ({ type: row === 0 ? "tableHeader" : "tableCell", content: [p(`${row === 0 ? "Header" : row}-${col}`)] })) })) };
   const note = await create(page, `V12 styles ${Date.now()}`, [{ type: "codeBlock", attrs: { language: "json" }, content: [{ type: "text", text: '{"a":1}' }] }, table, ...Array.from({ length: 30 }, () => p('After table'))]);
@@ -102,6 +108,18 @@ test("keeps natural table height with editor-scroll sticky headers and code icon
   expect(await header.evaluate(el => getComputedStyle(el).boxShadow)).not.toBe("none");
   await scroller.evaluate(el => { el.scrollTop += 300; });
   await expect.poll(async () => Math.abs((await header.boundingBox())!.y - (await scroller.boundingBox())!.y)).toBeLessThan(2);
+  await expect(wrapper).toHaveAttribute("data-header-driver", native ? "scroll-timeline" : "fallback");
+  // Stop JS scroll handlers entirely: the browser timeline must still keep
+  // the header pinned, including reverse scrolling.
+  await page.evaluate(enabled => { (window as unknown as { blockScrollTest: boolean }).blockScrollTest = enabled; }, native);
+  await scroller.hover();
+  for (const delta of [160, -140, 200, -180]) {
+    const before = await scroller.evaluate(el => el.scrollTop);
+    await page.mouse.wheel(0, delta);
+    await expect.poll(() => scroller.evaluate(el => el.scrollTop)).not.toBe(before);
+    await expect.poll(async () => Math.abs((await header.boundingBox())!.y - (await scroller.boundingBox())!.y)).toBeLessThan(2);
+  }
+  await page.evaluate(() => (window as unknown as { scrollTestAbort: AbortController }).scrollTestAbort.abort());
   // A wide table keeps the same horizontal coordinates for header and body.
   await wrapper.locator("table").evaluate(el => { el.style.minWidth = "1800px"; });
   await wrapper.evaluate(el => { el.scrollLeft = 250; });
